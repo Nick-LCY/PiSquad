@@ -1,0 +1,63 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "8d5f3f35b868",
+  "session_id": "019f8955-e15c-7cce-833c-075cb3be3d32",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-22T14:17:14.813093591Z",
+  "branch": "master",
+  "checkpoints_count": 6,
+  "files_touched": [
+    ".pi/extensions/subagent/index.ts",
+    ".pi/extensions/subagent/agents.ts",
+    ".pi/agents/scout.md",
+    ".pi/agents/planner.md",
+    ".pi/agents/reviewer.md",
+    ".pi/agents/worker.md",
+    ".pi/prompts/implement.md",
+    ".pi/prompts/scout-and-plan.md",
+    ".pi/prompts/implement-and-review.md"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "111089fb627e",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 246284,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 2916672,
+    "output_tokens": 27750,
+    "api_call_count": 43
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-22T14:17:14.766991256Z",
+    "agent_lines": 29,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 29,
+    "total_lines_changed": 29,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 1287,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".pi/agents/planner.md": 37,
+        ".pi/agents/reviewer.md": 35,
+        ".pi/agents/scout.md": 50,
+        ".pi/agents/worker.md": 24,
+        ".pi/extensions/subagent/agents.ts": 126,
+        ".pi/extensions/subagent/index.ts": 1015
+      }
+    }
+  ]
+}
