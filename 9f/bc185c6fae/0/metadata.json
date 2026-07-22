@@ -1,0 +1,97 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "9fbc185c6fae",
+  "session_id": "019f8a31-f110-745c-8421-537f3b55d9ca",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-22T15:17:30.588078446Z",
+  "branch": "master",
+  "checkpoints_count": 9,
+  "save_step_count": 2,
+  "files_touched": [
+    "docs/README.md",
+    "docs/architecture/README.md",
+    "docs/architecture/decisions/README.md",
+    "docs/architecture/overview.md",
+    "docs/conventions/README.md",
+    "docs/current-state.md",
+    "docs/prds/README.md",
+    "docs/tasks/README.md"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "fff8f0509aa1",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 93466,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1151552,
+    "output_tokens": 34349,
+    "api_call_count": 32
+  },
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-22T15:17:30.561733064Z",
+    "agent_lines": 172,
+    "agent_removed": 0,
+    "human_added": 52,
+    "human_modified": 10,
+    "human_removed": 0,
+    "total_committed": 234,
+    "total_lines_changed": 238,
+    "agent_percentage": 72.26890756302521,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 5,
+      "user_lines_removed": 5,
+      "agent_lines_added": 244,
+      "agent_lines_removed": 4,
+      "user_added_per_file": {
+        ".pi/agents/archivist.md": 1,
+        ".pi/agents/planner.md": 1,
+        ".pi/agents/reviewer.md": 1,
+        ".pi/agents/scout.md": 1,
+        ".pi/agents/worker.md": 1
+      },
+      "user_removed_per_file": {
+        ".pi/agents/archivist.md": 1,
+        ".pi/agents/planner.md": 1,
+        ".pi/agents/reviewer.md": 1,
+        ".pi/agents/scout.md": 1,
+        ".pi/agents/worker.md": 1
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 5,
+      "user_lines_removed": 5,
+      "agent_lines_added": 244,
+      "agent_lines_removed": 4,
+      "user_added_per_file": {
+        ".pi/agents/archivist.md": 1,
+        ".pi/agents/planner.md": 1,
+        ".pi/agents/reviewer.md": 1,
+        ".pi/agents/scout.md": 1,
+        ".pi/agents/worker.md": 1
+      },
+      "user_removed_per_file": {
+        ".pi/agents/archivist.md": 1,
+        ".pi/agents/planner.md": 1,
+        ".pi/agents/reviewer.md": 1,
+        ".pi/agents/scout.md": 1,
+        ".pi/agents/worker.md": 1
+      }
+    }
+  ]
+}
