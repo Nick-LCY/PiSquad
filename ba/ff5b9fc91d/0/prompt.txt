@@ -1,0 +1,1 @@
+我想要将一个工具，名为codegrpah集成到pi中。他的官方版本在集成到claude code的时候是通过mcp的方式的，我可以使用哪种方式来集成呢？要求是必须为project based的
