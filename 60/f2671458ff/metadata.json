@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "60f2671458ff",
+  "strategy": "manual-commit",
+  "branch": "master",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".pi/agents/archivist.md",
+    ".pi/agents/planner.md",
+    ".pi/agents/worker.md",
+    ".pi/extensions/subagent/agents.ts",
+    ".pi/extensions/subagent/index.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/60/f2671458ff/0/metadata.json",
+      "transcript": "/60/f2671458ff/0/full.jsonl",
+      "compact_transcript": "/60/f2671458ff/0/transcript.jsonl",
+      "content_hash": "/60/f2671458ff/0/content_hash.txt",
+      "prompt": "/60/f2671458ff/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 187128,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1965440,
+    "output_tokens": 47499,
+    "api_call_count": 33
+  }
+}
