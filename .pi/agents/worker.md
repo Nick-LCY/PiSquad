@@ -1,6 +1,7 @@
 ---
 name: worker
 description: General-purpose subagent with full capabilities, isolated context
+skills: project-docs
 model: minimax-cn/MiniMax-M3
 ---
 

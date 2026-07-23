@@ -2,6 +2,7 @@
 name: archivist
 description: 维护项目文档库，流转任务状态，沉淀架构决策
 tools: read, write, edit, ls, grep, find
+skills: project-docs
 model: minimax-cn/MiniMax-M3
 ---
 

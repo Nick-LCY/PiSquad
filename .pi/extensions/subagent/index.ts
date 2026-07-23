@@ -24,6 +24,7 @@ import {
 	type ExtensionAPI,
 	getAgentDir,
 	getMarkdownTheme,
+	loadSkills,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
@@ -262,6 +263,61 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+/**
+ * Resolve an agent's skill whitelist to concrete skill file paths.
+ *
+ * Strict whitelist model: the caller always passes `--no-skills` to the child
+ * process, so only the skills listed here are visible. Entries may be skill
+ * names (resolved against pi's default `.pi` skill discovery for the child's
+ * cwd) or filesystem paths (relative to cwd, `~`-prefixed, or absolute).
+ *
+ * Returns `paths` to feed to `--skill`, plus `missing` (unresolved entries) and
+ * `available` (all discovered skill names, for error messages).
+ */
+function resolveSkillPaths(
+	agentSkills: string[],
+	cwd: string,
+): { paths: string[]; missing: string[]; available: string[] } {
+	const result = loadSkills({
+		cwd,
+		agentDir: getAgentDir(),
+		skillPaths: [],
+		includeDefaults: true,
+	});
+
+	const byName = new Map<string, string>();
+	for (const skill of result.skills) byName.set(skill.name, skill.filePath);
+	const available = Array.from(byName.keys()).sort();
+
+	const paths: string[] = [];
+	const missing: string[] = [];
+	const seen = new Set<string>();
+
+	for (const entry of agentSkills) {
+		const trimmed = entry.trim();
+		if (!trimmed) continue;
+
+		const looksLikePath = trimmed.includes(path.sep) || trimmed.startsWith(".") || trimmed.startsWith("~");
+		let resolved: string | undefined;
+		if (looksLikePath) {
+			const expanded = trimmed.startsWith("~") ? path.join(os.homedir(), trimmed.slice(1)) : trimmed;
+			const abs = path.isAbsolute(expanded) ? expanded : path.resolve(cwd, expanded);
+			if (fs.existsSync(abs)) resolved = abs;
+		} else {
+			resolved = byName.get(trimmed);
+		}
+
+		if (!resolved) {
+			missing.push(trimmed);
+		} else if (!seen.has(resolved)) {
+			seen.add(resolved);
+			paths.push(resolved);
+		}
+	}
+
+	return { paths, missing, available };
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 async function runSingleAgent(
@@ -291,9 +347,32 @@ async function runSingleAgent(
 		};
 	}
 
+	const effectiveCwd = cwd ?? defaultCwd;
+
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+
+	// Strict skill whitelist: deny all skills by default. Only skills declared on
+	// the agent are exposed to the child, resolved to concrete paths via `--skill`.
+	args.push("--no-skills");
+	if (agent.skills && agent.skills.length > 0) {
+		const { paths, missing, available } = resolveSkillPaths(agent.skills, effectiveCwd);
+		if (missing.length > 0) {
+			const avail = available.length > 0 ? available.join(", ") : "none";
+			return {
+				agent: agentName,
+				agentSource: agent.source,
+				task,
+				exitCode: 1,
+				messages: [],
+				stderr: `Unknown skills for agent "${agentName}": ${missing.map((m) => `"${m}"`).join(", ")}. Available skills: ${avail}.`,
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+				step,
+			};
+		}
+		for (const p of paths) args.push("--skill", p);
+	}
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
@@ -333,7 +412,7 @@ async function runSingleAgent(
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
 			const proc = spawn(invocation.command, invocation.args, {
-				cwd: cwd ?? defaultCwd,
+				cwd: effectiveCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
@@ -441,8 +520,8 @@ const ChainItem = Type.Object({
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: 'Which agent directories to use. Default: "user". Use "both" to include project-local agents.',
-	default: "user",
+	description: 'Which agent directories to use. Default: "both" (user + project).',
+	default: "both",
 });
 
 const SubagentParams = Type.Object({
@@ -451,9 +530,6 @@ const SubagentParams = Type.Object({
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
 	agentScope: Type.Optional(AgentScopeSchema),
-	confirmProjectAgents: Type.Optional(
-		Type.Boolean({ description: "Prompt before running project-local agents. Default: true.", default: true }),
-	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
 
@@ -464,16 +540,14 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
-			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
+			`Loads agents from both ${path.join(getAgentDir(), "agents")} (user) and ${CONFIG_DIR_NAME}/agents (project). Project agents load without a confirmation prompt.`,
 		].join(" "),
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "user";
+			const agentScope: AgentScope = params.agentScope ?? "both";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
-			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -500,31 +574,6 @@ export default function (pi: ExtensionAPI) {
 					],
 					details: makeDetails("single")([]),
 				};
-			}
-
-			if ((agentScope === "project" || agentScope === "both") && confirmProjectAgents && ctx.hasUI) {
-				const requestedAgentNames = new Set<string>();
-				if (params.chain) for (const step of params.chain) requestedAgentNames.add(step.agent);
-				if (params.tasks) for (const t of params.tasks) requestedAgentNames.add(t.agent);
-				if (params.agent) requestedAgentNames.add(params.agent);
-
-				const projectAgentsRequested = Array.from(requestedAgentNames)
-					.map((name) => agents.find((a) => a.name === name))
-					.filter((a): a is AgentConfig => a?.source === "project");
-
-				if (projectAgentsRequested.length > 0) {
-					const names = projectAgentsRequested.map((a) => a.name).join(", ");
-					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await ctx.ui.confirm(
-						"Run project-local agents?",
-						`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
-					);
-					if (!ok)
-						return {
-							content: [{ type: "text", text: "Canceled: project-local agents not approved." }],
-							details: makeDetails(hasChain ? "chain" : hasTasks ? "parallel" : "single")([]),
-						};
-				}
 			}
 
 			if (params.chain && params.chain.length > 0) {
@@ -698,7 +747,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
-			const scope: AgentScope = args.agentScope ?? "user";
+			const scope: AgentScope = args.agentScope ?? "both";
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +

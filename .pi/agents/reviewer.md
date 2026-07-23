@@ -2,6 +2,7 @@
 name: reviewer
 description: Code review specialist for quality and security analysis
 tools: read, grep, find, ls, bash
+skills: project-docs
 model: minimax-cn/MiniMax-M3
 ---
 
