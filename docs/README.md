@@ -9,12 +9,13 @@
 | 当前状态 | 开始任何工作前，先了解进度 / TODO | [[current-state.md]] |
 | 架构 | 理解系统设计、查看架构决策 (ADR) | [[architecture/README.md]] |
 | 约定 | 编码、提交、命名等规范 | [[conventions/README.md]] |
+| 词汇表 | 统一文档库术语含义 | [[glossary.md]] |
 | 需求 (PRD) | 了解某个需求的设计 | [[prds/README.md]] |
 | 任务 | 领取 / 查看开发任务 | [[tasks/README.md]] |
 
 ## 生命周期
 
-- **稳定层**（很少变）：`architecture/`、`conventions/`
+- **稳定层**（很少变）：`architecture/`、`conventions/`、`glossary`
 - **流动层**（随开发变化）：`prds/`、`tasks/`、`current-state.md`
 
 ## 开发流
