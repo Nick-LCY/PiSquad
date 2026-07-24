@@ -33,6 +33,7 @@ const WIKILINK_RE = /\[\[([^\[\]]+?)\]\]/g;
  *   [[a/b.md|Alias]]        -> a/b.md   (alias after first |)
  *   [[a/b.md#Heading]]      -> a/b.md   (anchor after first #)
  *   [[a/b.md#H|Alias]]      -> a/b.md
+ *   [[a/b.md\|Alias]]      -> a/b.md   (escaped \| inside a Markdown table cell)
  *   [[#Heading]]            -> ""        (same-file anchor, no file)
  */
 export function extractWikilinkTargets(text: string): { raw: string; target: string }[] {
@@ -40,8 +41,10 @@ export function extractWikilinkTargets(text: string): { raw: string; target: str
 	for (const match of text.matchAll(WIKILINK_RE)) {
 		const raw = match[0];
 		const inner = match[1];
-		// Drop alias (everything after the first |), then drop anchor (after first #).
-		const filePart = inner.split("|")[0].split("#")[0].trim();
+		// Drop alias: the separator is "|", but inside Markdown table cells it is
+		// escaped as "\|". Split on either, take the part before it; then drop any
+		// anchor ("#heading").
+		const filePart = inner.split(/\\\||\|/)[0].split("#")[0].trim();
 		out.push({ raw, target: filePart });
 	}
 	return out;
