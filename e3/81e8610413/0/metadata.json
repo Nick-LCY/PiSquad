@@ -1,0 +1,78 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "e381e8610413",
+  "session_id": "019f91a6-fc35-7446-bd22-4b18f7e358d7",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-24T03:29:30.422477879Z",
+  "branch": "main",
+  "checkpoints_count": 6,
+  "save_step_count": 2,
+  "files_touched": [
+    "LICENSE",
+    "README.md",
+    "README.zh.md"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "58bd91c048ae",
+  "checkpoint_transcript_start": 122,
+  "transcript_lines_at_start": 122,
+  "compact_transcript_start": 57,
+  "token_usage": {
+    "input_tokens": 214946,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1945408,
+    "output_tokens": 31569,
+    "api_call_count": 17
+  },
+  "session_metrics": {
+    "turn_count": 17
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-24T03:29:30.330750908Z",
+    "agent_lines": 271,
+    "agent_removed": 0,
+    "human_added": 1,
+    "human_modified": 10,
+    "human_removed": 0,
+    "total_committed": 278,
+    "total_lines_changed": 282,
+    "agent_percentage": 96.09929078014184,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 3,
+      "user_lines_removed": 3,
+      "agent_lines_added": 151,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "README.zh.md": 3
+      },
+      "user_removed_per_file": {
+        "README.zh.md": 3
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 3,
+      "user_lines_removed": 3,
+      "agent_lines_added": 283,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "README.zh.md": 3
+      },
+      "user_removed_per_file": {
+        "README.zh.md": 3
+      }
+    }
+  ]
+}
