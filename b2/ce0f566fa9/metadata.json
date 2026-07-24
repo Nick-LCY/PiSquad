@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "b2ce0f566fa9",
+  "strategy": "manual-commit",
+  "branch": "master",
+  "checkpoints_count": 4,
+  "files_touched": [
+    ".pi/agents/archivist.md",
+    ".pi/extensions/wikilink-lint/index.ts",
+    ".pi/extensions/wikilink-lint/lint.ts",
+    ".pi/skills/workflow/SKILL.md",
+    ".pi/skills/workflow/orchestration.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/b2/ce0f566fa9/0/metadata.json",
+      "transcript": "/b2/ce0f566fa9/0/full.jsonl",
+      "compact_transcript": "/b2/ce0f566fa9/0/transcript.jsonl",
+      "content_hash": "/b2/ce0f566fa9/0/content_hash.txt",
+      "prompt": "/b2/ce0f566fa9/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 69012,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1059456,
+    "output_tokens": 35199,
+    "api_call_count": 27
+  }
+}

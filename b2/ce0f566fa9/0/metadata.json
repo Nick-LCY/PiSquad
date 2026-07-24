@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "b2ce0f566fa9",
+  "session_id": "019f91a6-fc35-7446-bd22-4b18f7e358d7",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-24T01:52:24.427816223Z",
+  "branch": "master",
+  "checkpoints_count": 4,
+  "files_touched": [
+    ".pi/skills/workflow/SKILL.md",
+    ".pi/skills/workflow/orchestration.md",
+    ".pi/agents/archivist.md",
+    ".pi/extensions/wikilink-lint/lint.ts",
+    ".pi/extensions/wikilink-lint/index.ts"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "a2c53b818990",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 69012,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1059456,
+    "output_tokens": 35199,
+    "api_call_count": 27
+  },
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-24T01:52:24.399627223Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 1,
+    "total_committed": 0,
+    "total_lines_changed": 1,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 328,
+      "user_lines_removed": 1,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".pi/agents/archivist.md": 15,
+        ".pi/extensions/wikilink-lint/index.ts": 93,
+        ".pi/extensions/wikilink-lint/lint.ts": 106,
+        ".pi/skills/workflow/SKILL.md": 36,
+        ".pi/skills/workflow/orchestration.md": 78
+      },
+      "user_removed_per_file": {
+        ".pi/agents/archivist.md": 1
+      }
+    }
+  ]
+}
