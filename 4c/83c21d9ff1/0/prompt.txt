@@ -1,7 +1,3 @@
-小改动，你直接补一下，然后commit。
-
----
-
 ### 需你确认的两点                                                                                                                                                        
                                                                                                                                                                            
  1. 表格内 wikilink 去掉了别名：current-state.md 任务看板原显示「01 Web 后端骨架」等短文案，改成 [[tasks/.../NN-xxx.md]] 后显示为完整路径（与 README.md 地图表格现有风格一 
