@@ -1,0 +1,172 @@
+我想要为这个种子仓库增加一个bash脚本，用于快速创建基础内容。这个脚本中需要把entire和codegraph做成可选项，你有什么思路来做这件事情吗？
+
+---
+
+依赖体检是否可以提取成一个单独的命令呢，类似这样：
+pisquad check - 得到依赖项报告
+pisquad install - 安装，这时候可选 --force, --no-codegraph, --no-entire
+这样子就可以了？然后不需要用cp -r，这个仓库在Github有public repo，可不可以从github下载？
+
+---
+
+1. A
+2. 写死main即可
+3. 不算。
+
+还有疑问吗
+
+---
+
+1. 放在仓库，然后用户使用是curl .... 的方式
+2. 可以。
+3. 可以把.gitignore放到.pi文件夹下，这样就可以避免引入node_modules了？
+
+---
+
+codegraph
+
+---
+
+codegraph 的 extension 也是 codegraph cli 直接装的，不用从仓库中复制过去。
+
+---
+
+可以。
+
+---
+
+可以，不过我想了一下，还是不要两个指令，在一个指令中完成吧。install默认带check dep的功能，然后进入一个交互式界面，让用户选择装哪些（entire、codegraph）。先不考虑使用命令行参数来调整安装，只考虑使用交互式界面。另外如果没有entire cli或者codegraph cli，直接不允许安装对应的拓展。
+
+---
+
+1. 对的
+2. 直接默认当前目录，不需要输入。
+3. 是的，增加一个覆盖的选项。
+
+然后.pi的.gitignore，直接在本仓库也更新，这样脚本就不需要自己创建.gitignore，而是安装下来即自带。
+
+---
+
+Task: 创建 pi-squad 种子仓库的安装脚本 `pisquad` 以及补一个 `.pi/.gitignore`。这是机械且规格已完全锁定的任务，严格按下方规格执行，不要自行扩展设计。
+
+仓库根：/home/sankabox/code/PiExperiment
+GitHub 仓库：Nick-LCY/PiSquad，默认分支 main
+现有结构（已确认）：`.pi/agents/`(5 agent md) `.pi/skills/{project-docs,workflow}` `.pi/extensions/{subagent,wikilink-lint}`(纯 TS 无 package.json) `.pi/extensions/codegraph`(有 package.json+package-lock.json，依赖 typebox，运行时需 node_modules) `.pi/extensions/entire`(index.ts，头部注释说明由 `entire enable --agent pi` 自动生成) `docs/`(骨架) `codegraph.json`(根) `.codegraph/.gitignore`(根，已 tracked) `.entire/`(根)。
+
+== 文件 1：新建 `.pi/.gitignore` ==
+内容只有一行（含尾部换行）：
+node_modules
+（目的：覆盖 `.pi/extensions/codegraph/node_modules`。`.gitignore` 中无前导斜杠的 pattern 递归匹配子目录，正好覆盖该 node_modules。）
+然后 `git add .pi/.gitignore` 让其纳入跟踪（tarball 才会自带）。
+
+== 文件 2：新建仓库根 `pisquad`（可执行 bash 脚本） ==
+- shebang: `#!/usr/bin/env bash`
+- `set -euo pipefail`
+- macOS 默认 bash 3 兼容：禁止 `mapfile`/`readarray`、关联数组 `declare -A`、`${var,,}`小写化、`read -N` 等 bash4+ 特性；可用普通索引数组和 `read -p`/`read -r`。
+- 文件末尾 `chmod +x pisquad` 确保可执行，并 `git add pisquad`（让其以可执行位进 git）。
+
+脚本行为规格（单命令、交互式、内置体检、硬门槛）：
+
+[总流程]
+1. 欢迎横幅一行：`pisquad — 安装 pi-squad 开发底座 (源: GitHub Nick-LCY/PiSquad@main)`
+2. 目标目录固定为脚本被调用时的当前工作目录 `$(pwd)`，不询问、不接受位置参数；在界面里展示当前目录供用户确认信息。
+3. 依赖体检（见下），把结果存变量并打印。
+4. 探测目标 `.pi/` 是否已存在：
+   - 若存在：`read -p "目标 $(pwd)/.pi 已存在。覆盖将删除现有 .pi/ 和 docs/，是否继续？[y/N] " ans`；默认 N=中止退出（exit 1，不做任何修改）。
+   - 若不存在：直接进交互菜单。
+5. 交互式选择界面（见下）。
+6. 用户确认安装后，下载种子（见下）到临时目录，按选择拷贝，执行收尾，打印摘要与下一步（见下）。
+7. 全程用 `trap 'rm -rf "$TMPDIR"' EXIT` 清理临时目录。
+
+[依赖体检]
+检测并列出：
+- `node` → `command -v node >/dev/null 2>&1`，存在则打印版本 `node -v`。
+- `npm` → 同上，版本 `npm -v`。
+- `codegraph` CLI → `command -v codegraph`，仅探测存在性（不强求版本）。
+- `entire` CLI → `command -v entire`，仅探测存在性。
+- GitHub 可达性：不强求预检，下载步骤自然失败时报错即可（避免额外请求）。但体检报告里不必列网络项。
+得到这些状态后用于交互菜单的"可选项硬门槛"判定：
+- codegraph 可选 ⇔ (`codegraph` CLI 在) 且 (`node` 在) 且 (`npm` 在)
+- entire 可选 ⇔ `entire` CLI 在
+任何缺失项在报告里标注 `✗ (未安装)`，就绪项标注 `✓`。
+
+[交互式选择界面]
+实现一个简洁的菜单循环。推荐形态（可用 `read -p` 读单字符命令）：
+```
+pi-squad 组件选择:
+  core ........... 始终安装 (agents / skills / subagent / wikilink-lint / docs)
+  codegraph ...... [状态]   (依赖: codegraph CLI, node, npm)
+  entire ......... [状态]   (依赖: entire CLI)
+
+输入 1 切换 codegraph / 2 切换 entire / i 开始安装 / q 退出
+```
+行为要求：
+- 两个可选项默认**未勾选**（`[ ]`）。
+- 当某项因 CLI 缺失不可选时，在它的状态栏标注 `(不可选: CLI 缺失)`，且按对应数字键尝试切换时仅打印一行提示 `codegraph CLI 未安装，无法选择`（不改变状态）。
+- 可选项就绪时标注 `（可选，输入 1 勾选）`，切换后 `[x]` 勾选 / `[ ]` 取消。
+- `i` 开始安装；`q` 退出（非零退出码）。
+- 输入其它字符则重新打印菜单。
+- 两个可选项都可不选 = 纯核心安装，允许执行。
+- 这是一个循环；每次输入后重绘当前选择状态。
+
+[下载种子]
+- 首选：`curl -fsSL https://codeload.github.com/Nick-LCY/PiSquad/tar.gz/refs/heads/main -o "$TMPDIR/seed.tgz"` 然后 `mkdir -p "$TMPDIR/seed" && tar xzf "$TMPDIR/seed.tgz" -C "$TMPDIR/seed" --strip-components=1`。
+  - 若 `curl` 或 `tar` 不存在，或 curl 返回非零，回退到 git：`git clone --depth 1 https://github.com/Nick-LCY/PiSquad.git "$TMPDIR/seed"`（此分支下 clone 即为 main 内容）。
+  - 若 `curl`/`tar` 路径与 `git` 都不可用 → 报错退出：说明需要 `curl`/`tar` 或 `git` 之一来下载种子。
+  - 若两条路径都失败 → 报错退出并提示用户检查网络/重试，提示其即可用 `pisquad` 这行 bootstrap 命令又触发了 install 的下载。
+- 下载后校验种子是否含预期目录：`[ -d "$TMPDIR/seed/.pi/agents" ] && [ -d "$TMPDIR/seed/docs" ]`，否则报错退出（坏下载）。
+- 重要：GitHub tarball 不会包含任何 `node_modules`（已被 .gitignore 排除、不在仓库），因此**拷贝步骤无需排除 node_modules**；但脚本里仍应在 codegraph 目录 `npm install` 生成它。
+
+[拷贝：种子 → 目标]
+用变量 `SEED="$TMPDIR/seed"`、`DEST="$(pwd)"`。确保 `DEST/.pi/extensions` 目录存在后再拷扩展。
+核心(恒装)：用 `cp -r`：
+- `$SEED/.pi/agents` → `$DEST/.pi/`
+- `$SEED/.pi/skills` → `$DEST/.pi/`
+- `$SEED/.pi/.gitignore` → `$DEST/.pi/.gitignore`
+- `$SEED/.pi/extensions/subagent` → `$DEST/.pi/extensions/`
+- `$SEED/.pi/extensions/wikilink-lint` → `$DEST/.pi/extensions/`
+- `$SEED/docs` → `$DEST/docs`
+如前述覆盖分支已先删除 `$DEST/.pi` 和 `$DEST/docs` 再走核心拷贝（见[总流程]第4步的覆盖处置：用户确认覆盖后，正式安装前 `rm -rf "$DEST/.pi" "$DEST/docs"`）。
+
+codegraph(仅当被勾选):
+- `cp -r "$SEED/.pi/extensions/codegraph" "$DEST/.pi/extensions/"`
+- `cp "$SEED/codegraph.json" "$DEST/codegraph.json"`
+- 在 `$DEST/.pi/extensions/codegraph` 执行 `npm install`（用 `npm install` 即可，复用 package-lock）
+- 在 `$DEST` 执行 `codegraph init`
+- 拷 `$SEED/.codegraph/.gitignore` 到 `$DEST/.codegraph/.gitignore`（init 之后 `.codegraph/` 已存在；若该源文件存在则覆盖写入，保证忽略 db 这条约定落地）
+  - 若 `$SEED/.codegraph/.gitignore` 不存在则跳过此步（不报错）。
+- 子目录建议用 `mkdir -p` 确保父目录存在。
+
+entire(仅当被勾选，且 entire CLI 在):
+- 在 `$DEST` 执行 `entire enable --agent pi`
+- 不拷任何 seed 文件（entire 由 CLI 现生成，避免版本不匹配）
+- 若 `entire enable` 返回非零 → 打印警告但**不中止**整个安装（entire 是可选增强），并提示用户稍后自行运行 `entire enable --agent pi`。
+
+[健壮性]
+- 预检下载工具：在尝试下载前不强制；下载段自然降级即可。
+- 临时目录用 `TMPDIR=$(mktemp -d)`；`trap 'rm -rf "$TMPDIR"' EXIT`。
+- 所有外部命令失败信息友好化：GitHub 下载失败明确提示网络/重试。
+- 不要在脚本里创建 `.pi/.gitignore`（它已由本仓库自带并发到 tarball）；只 `$SEED` 拷贝。同理不要创建根 `.gitignore`。
+- 不要复制 `pisquad` 自身（脚本运行的是 bootstrapped 的本地文件；$SEED 里有 `pisquad` 但我们从不拷它）。
+- 不要复制 `README.md`/`README.zh.md`/`LICENSE`。
+
+[安装摘要输出]
+安装完成后打印：
+- 已安装组件清单（core 必有；codegraph/entire 按勾选）。
+- 对应路径。
+- 下一步提示：
+  - 若装了 codegraph：`已执行 codegraph init；如需重建索引运行 \`codegraph init\``。
+  - 若装了 entire：`已执行 \`entire enable --agent pi\``。
+  - 通用：`运行 \`pi\` 启动，agents/skills/extensions 将自动加载。`
+
+== 验证（你必须执行）==
+1. `bash -n /home/sankabox/code/PiExperiment/pisquad` 语法自检必须通过。
+2. 若 `command -v shellcheck` 则运行 `shellcheck pisquad` 并修掉 Critical/Warning（Suggestion 可保留但尽量改）。
+3. 冒烟测试（非交互，用管道喂输入）：在一个干净的临时目标目录里跑，"只装 core、不选可选组件、确认安装"。例如：
+   `mkdir -p /tmp/pisquad-smoke && cd /tmp/pisquad-smoke && printf 'i\n' | bash /home/sankabox/code/PiExperiment/pisquad`
+   预期：生成 `/tmp/pisquad-smoke/.pi/agents`、`.pi/skills`、`.pi/.gitignore`、`.pi/extensions/{subagent,wikilink-lint}`、`docs/`；无 codegraph、entire、readme。
+   测试后 `rm -rf /tmp/pisquad-smoke` 清理。
+4. 确认 `.pi/.gitignore` 内是单行 `node_modules`（`cat .pi/.gitignore`，`wc -c` 应为 12 含换行）。
+5. 完成后清理冒烟残留，但**保留**仓库里新建的 `.pi/.gitignore` 和 `pisquad`（这是要交付的产物）。
+
+交付时请返回：改/新建文件清单（带路径）、`pisquad` 行数、`bash -n` 与（如有）shellcheck 结果、冒烟测试结果，以及任何规格里未覆盖但你做出的合理默认决定。
