@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# bash 守卫：非 bash 下友好提示并退出（POSIX 兼容写法，避免在 sh/dash 里崩在 bash 特性上）
+if [ -z "$BASH_VERSION" ]; then
+  printf '%s\n' "pisquad 需要 bash 执行。请改用: curl -fsSL https://raw.githubusercontent.com/Nick-LCY/PiSquad/main/pisquad | bash" >&2
+  printf '%s\n' "或先下载再运行: curl -fsSL https://raw.githubusercontent.com/Nick-LCY/PiSquad/main/pisquad -o pisquad && chmod +x pisquad && ./pisquad" >&2
+  exit 1
+fi
 set -euo pipefail
 
 DEST="$(pwd)"
@@ -16,7 +22,7 @@ if command -v entire >/dev/null 2>&1; then entire_ok=1; printf 'entire CLI: ✓\
 
 overwrite=0
 if [ -e "$DEST/.pi" ] || [ -e "$DEST/docs" ]; then
-  read -r -p "目标已存在 .pi/ 或 docs/。覆盖将删除现有 .pi/ 和 docs/，是否继续？[y/N] " ans
+  read -r -p "目标已存在 .pi/ 或 docs/。覆盖将删除现有 .pi/ 和 docs/，是否继续？[y/N] " ans </dev/tty || exit 1
   case "$ans" in y|Y) overwrite=1 ;; *) exit 1 ;; esac
 fi
 
@@ -41,7 +47,7 @@ while :; do
     printf '  entire ......... [ ] (不可选: CLI 缺失)\n'
   fi
   printf '%s\n' '输入 1 切换 codegraph / 2 切换 entire / i 开始安装 / q 退出'
-  read -r -p '> ' choice || exit 1
+  read -r -p '> ' choice </dev/tty || exit 1
   case "$choice" in
     1) if [ "$codegraph_ok" -eq 1 ] && [ "$node_ok" -eq 1 ] && [ "$npm_ok" -eq 1 ]; then [ "$codegraph_selected" -eq 1 ] && codegraph_selected=0 || codegraph_selected=1; else
          cg_missing=''
