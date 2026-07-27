@@ -8,9 +8,11 @@
 ## 任务看板
 | Task | 状态 | 备注 |
 |------|------|------|
-| — | — | — |
+| 新增 `pisquad` 安装脚本及 `.pi/.gitignore` 忽略规则 | done | 交互式部署 pi-squad 种子，支持可选 codegraph / entire 组件 |
 
 ## TODO / 阻塞
 - [ ] 
 
 ## 最近变更
+- 新增根目录 `pisquad`：交互式部署 pi-squad 种子，支持 GitHub tarball 主路径及浅克隆回退。
+- 已完成依赖检查、覆盖保护与静态/不触网冒烟验证；端到端 happy path 待发布到 `main` 后人工验证。

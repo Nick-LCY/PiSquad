@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEST="$(pwd)"
+printf '%s\n' 'pisquad — 安装 pi-squad 开发底座 (源: GitHub Nick-LCY/PiSquad@main)'
+printf '目标目录: %s\n' "$DEST"
+
+node_ok=0
+npm_ok=0
+codegraph_ok=0
+entire_ok=0
+if command -v node >/dev/null 2>&1; then node_ok=1; printf 'node: ✓ (%s)\n' "$(node -v)"; else printf 'node: ✗ (未安装)\n'; fi
+if command -v npm >/dev/null 2>&1; then npm_ok=1; printf 'npm: ✓ (%s)\n' "$(npm -v)"; else printf 'npm: ✗ (未安装)\n'; fi
+if command -v codegraph >/dev/null 2>&1; then codegraph_ok=1; printf 'codegraph CLI: ✓\n'; else printf 'codegraph CLI: ✗ (未安装)\n'; fi
+if command -v entire >/dev/null 2>&1; then entire_ok=1; printf 'entire CLI: ✓\n'; else printf 'entire CLI: ✗ (未安装)\n'; fi
+
+overwrite=0
+if [ -e "$DEST/.pi" ] || [ -e "$DEST/docs" ]; then
+  read -r -p "目标已存在 .pi/ 或 docs/。覆盖将删除现有 .pi/ 和 docs/，是否继续？[y/N] " ans
+  case "$ans" in y|Y) overwrite=1 ;; *) exit 1 ;; esac
+fi
+
+codegraph_selected=0
+entire_selected=0
+printf '\n'
+while :; do
+  printf '%s\n' 'pi-squad 组件选择:'
+  printf '%s\n' '  core ........... 始终安装 (agents / skills / subagent / wikilink-lint / docs)'
+  if [ "$codegraph_ok" -eq 1 ] && [ "$node_ok" -eq 1 ] && [ "$npm_ok" -eq 1 ]; then
+    if [ "$codegraph_selected" -eq 1 ]; then printf '  codegraph ...... [x] （可选，输入 1 取消）\n'; else printf '  codegraph ...... [ ] （可选，输入 1 勾选）\n'; fi
+  else
+    cg_missing=''
+    [ "$codegraph_ok" -ne 1 ] && cg_missing="${cg_missing}${cg_missing:+、}codegraph CLI"
+    [ "$node_ok" -ne 1 ] && cg_missing="${cg_missing}${cg_missing:+、}node"
+    [ "$npm_ok" -ne 1 ] && cg_missing="${cg_missing}${cg_missing:+、}npm"
+    printf '  codegraph ...... [ ] (不可选: 缺 %s)\n' "$cg_missing"
+  fi
+  if [ "$entire_ok" -eq 1 ]; then
+    if [ "$entire_selected" -eq 1 ]; then printf '  entire ......... [x] （可选，输入 2 取消）\n'; else printf '  entire ......... [ ] （可选，输入 2 勾选）\n'; fi
+  else
+    printf '  entire ......... [ ] (不可选: CLI 缺失)\n'
+  fi
+  printf '%s\n' '输入 1 切换 codegraph / 2 切换 entire / i 开始安装 / q 退出'
+  read -r -p '> ' choice || exit 1
+  case "$choice" in
+    1) if [ "$codegraph_ok" -eq 1 ] && [ "$node_ok" -eq 1 ] && [ "$npm_ok" -eq 1 ]; then [ "$codegraph_selected" -eq 1 ] && codegraph_selected=0 || codegraph_selected=1; else
+         cg_missing=''
+         [ "$codegraph_ok" -ne 1 ] && cg_missing="${cg_missing}${cg_missing:+、}codegraph CLI"
+         [ "$node_ok" -ne 1 ] && cg_missing="${cg_missing}${cg_missing:+、}node"
+         [ "$npm_ok" -ne 1 ] && cg_missing="${cg_missing}${cg_missing:+、}npm"
+         printf '%s\n' "codegraph 不可选：缺 ${cg_missing}"
+       fi ;;
+    2) if [ "$entire_ok" -eq 1 ]; then [ "$entire_selected" -eq 1 ] && entire_selected=0 || entire_selected=1; else printf '%s\n' 'entire CLI 未安装，无法选择'; fi ;;
+    i|I) break ;;
+    q|Q) exit 0 ;;
+  esac
+  printf '\n'
+done
+
+TMPDIR="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR"' EXIT
+SEED="$TMPDIR/seed"
+mkdir -p "$SEED"
+download_ok=0
+have_curl_tar=0
+have_git=0
+curl_err=''
+tar_err=''
+git_msg=''
+if command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then have_curl_tar=1; fi
+if command -v git >/dev/null 2>&1; then have_git=1; fi
+if [ "$have_curl_tar" -eq 1 ]; then
+  if curl -fsSL 'https://codeload.github.com/Nick-LCY/PiSquad/tar.gz/refs/heads/main' -o "$TMPDIR/seed.tgz"; then
+    if tar xzf "$TMPDIR/seed.tgz" -C "$SEED" --strip-components=1; then
+      download_ok=1
+    else
+      tar_err='解压失败，种子可能损坏'
+    fi
+  else
+    curl_err='下载失败，请检查网络后重试'
+  fi
+fi
+if [ "$download_ok" -eq 0 ] && [ "$have_git" -eq 1 ]; then
+  rm -rf "$SEED"
+  mkdir -p "$SEED"
+  if git clone --depth 1 --branch main --single-branch https://github.com/Nick-LCY/PiSquad.git "$SEED"; then
+    download_ok=1
+  else
+    git_msg='git clone 失败，请检查网络后重试'
+  fi
+fi
+if [ "$download_ok" -eq 0 ]; then
+  if [ "$have_curl_tar" -eq 0 ] && [ "$have_git" -eq 0 ]; then
+    msg='需要 curl+tar 或 git 来下载种子'
+  elif [ "$have_curl_tar" -eq 1 ] && [ -n "$git_msg" ]; then
+    msg='下载与 git clone 均失败，请检查网络后重试'
+  elif [ -n "$curl_err" ]; then
+    msg="$curl_err"
+  elif [ -n "$tar_err" ]; then
+    msg="$tar_err"
+  else
+    msg="$git_msg"
+  fi
+  printf '%s\n' "错误：${msg}。" >&2
+  exit 1
+fi
+# 校验种子完整（恒装项 + 可选项按需）
+missing_items=''
+[ -d "$SEED/.pi/agents" ] || missing_items="${missing_items}${missing_items:+、}.pi/agents"
+[ -d "$SEED/.pi/skills" ] || missing_items="${missing_items}${missing_items:+、}.pi/skills"
+[ -f "$SEED/.pi/.gitignore" ] || missing_items="${missing_items}${missing_items:+、}.pi/.gitignore"
+[ -d "$SEED/.pi/extensions/subagent" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/subagent"
+[ -d "$SEED/.pi/extensions/wikilink-lint" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/wikilink-lint"
+[ -d "$SEED/docs" ] || missing_items="${missing_items}${missing_items:+、}docs"
+if [ "$codegraph_selected" -eq 1 ]; then
+  [ -d "$SEED/.pi/extensions/codegraph" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/codegraph"
+  [ -f "$SEED/codegraph.json" ] || missing_items="${missing_items}${missing_items:+、}codegraph.json"
+fi
+if [ -n "$missing_items" ]; then printf '%s\n' "错误：种子缺少 ${missing_items}；中止安装以避免留下半安装态。" >&2; exit 1; fi
+if [ "$overwrite" -eq 1 ]; then rm -rf "$DEST/.pi" "$DEST/docs"; fi
+mkdir -p "$DEST/.pi/extensions"
+cp -r "$SEED/.pi/agents" "$DEST/.pi/"
+cp -r "$SEED/.pi/skills" "$DEST/.pi/"
+if [ -f "$SEED/.pi/.gitignore" ]; then cp "$SEED/.pi/.gitignore" "$DEST/.pi/.gitignore"; else printf '%s\n' '错误：种子缺少 .pi/.gitignore。' >&2; exit 1; fi
+cp -r "$SEED/.pi/extensions/subagent" "$DEST/.pi/extensions/"
+cp -r "$SEED/.pi/extensions/wikilink-lint" "$DEST/.pi/extensions/"
+# docs 文档：目标已有 docs/ 时由覆盖分支已删；此处直接拷贝即可，不会嵌套
+cp -r "$SEED/docs" "$DEST/docs"
+if [ "$codegraph_selected" -eq 1 ]; then
+  cp -r "$SEED/.pi/extensions/codegraph" "$DEST/.pi/extensions/"
+  cp "$SEED/codegraph.json" "$DEST/codegraph.json"
+  (cd "$DEST/.pi/extensions/codegraph" && npm install)
+  (cd "$DEST" && codegraph init)
+  if [ -f "$SEED/.codegraph/.gitignore" ]; then mkdir -p "$DEST/.codegraph"; cp "$SEED/.codegraph/.gitignore" "$DEST/.codegraph/.gitignore"; fi
+fi
+entire_done=0
+if [ "$entire_selected" -eq 1 ]; then
+  if (cd "$DEST" && entire enable --agent pi); then entire_done=1; else printf '%s\n' '警告：entire enable 失败；稍后可自行运行 entire enable --agent pi。'; fi
+fi
+printf '\n安装完成。\n已安装组件：core\n'
+[ "$codegraph_selected" -eq 1 ] && printf '%s\n' 'codegraph'
+if [ "$entire_selected" -eq 1 ] && [ "$entire_done" -eq 1 ]; then printf '%s\n' 'entire'; fi
+if [ "$entire_selected" -eq 1 ] && [ "$entire_done" -eq 0 ]; then printf '%s\n' 'entire: 已选择但启用失败（请手动运行 entire enable --agent pi）'; fi
+printf '路径：%s/.pi、%s/docs\n' "$DEST" "$DEST"
+[ "$codegraph_selected" -eq 1 ] && printf '%s\n' '已执行 codegraph init；如需重建索引运行 `codegraph init`。'
+[ "$entire_done" -eq 1 ] && printf '%s\n' '已执行 `entire enable --agent pi`。'
+printf '%s\n' '运行 `pi` 启动，agents/skills/extensions 将自动加载。'
