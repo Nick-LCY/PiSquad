@@ -820,7 +820,6 @@ export default function (pi: ExtensionAPI) {
 				const isError = isFailedResult(r);
 				const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 				const displayItems = getDisplayItems(r.messages);
-				const finalOutput = getFinalOutput(r.messages);
 
 				if (expanded) {
 					const container = new Container();
@@ -834,11 +833,16 @@ export default function (pi: ExtensionAPI) {
 					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
 					container.addChild(new Spacer(1));
 					container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
-					if (displayItems.length === 0 && !finalOutput) {
+					if (displayItems.length === 0) {
 						container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
 					} else {
 						for (const item of displayItems) {
-							if (item.type === "toolCall")
+							if (item.type === "text") {
+								if (item.text.trim()) {
+									container.addChild(new Spacer(1));
+									container.addChild(new Markdown(item.text.trim(), 0, 0, mdTheme));
+								}
+							} else {
 								container.addChild(
 									new Text(
 										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
@@ -846,10 +850,7 @@ export default function (pi: ExtensionAPI) {
 										0,
 									),
 								);
-						}
-						if (finalOutput) {
-							container.addChild(new Spacer(1));
-							container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
+							}
 						}
 					}
 					const usageStr = formatUsageStats(r.usage, r.model);
@@ -906,7 +907,6 @@ export default function (pi: ExtensionAPI) {
 					for (const r of details.results) {
 						const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 						const displayItems = getDisplayItems(r.messages);
-						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
 						container.addChild(
@@ -918,9 +918,14 @@ export default function (pi: ExtensionAPI) {
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
-						// Show tool calls
+						// Show intermediate text and tool calls in order
 						for (const item of displayItems) {
-							if (item.type === "toolCall") {
+							if (item.type === "text") {
+								if (item.text.trim()) {
+									container.addChild(new Spacer(1));
+									container.addChild(new Markdown(item.text.trim(), 0, 0, mdTheme));
+								}
+							} else {
 								container.addChild(
 									new Text(
 										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
@@ -929,12 +934,6 @@ export default function (pi: ExtensionAPI) {
 									),
 								);
 							}
-						}
-
-						// Show final output as markdown
-						if (finalOutput) {
-							container.addChild(new Spacer(1));
-							container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
 						}
 
 						const stepUsage = formatUsageStats(r.usage, r.model);
@@ -995,7 +994,6 @@ export default function (pi: ExtensionAPI) {
 					for (const r of details.results) {
 						const rIcon = isFailedResult(r) ? theme.fg("error", "✗") : theme.fg("success", "✓");
 						const displayItems = getDisplayItems(r.messages);
-						const finalOutput = getFinalOutput(r.messages);
 
 						container.addChild(new Spacer(1));
 						container.addChild(
@@ -1003,9 +1001,14 @@ export default function (pi: ExtensionAPI) {
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
-						// Show tool calls
+						// Show intermediate text and tool calls in order
 						for (const item of displayItems) {
-							if (item.type === "toolCall") {
+							if (item.type === "text") {
+								if (item.text.trim()) {
+									container.addChild(new Spacer(1));
+									container.addChild(new Markdown(item.text.trim(), 0, 0, mdTheme));
+								}
+							} else {
 								container.addChild(
 									new Text(
 										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
@@ -1014,12 +1017,6 @@ export default function (pi: ExtensionAPI) {
 									),
 								);
 							}
-						}
-
-						// Show final output as markdown
-						if (finalOutput) {
-							container.addChild(new Spacer(1));
-							container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
 						}
 
 						const taskUsage = formatUsageStats(r.usage, r.model);
