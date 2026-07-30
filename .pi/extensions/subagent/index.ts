@@ -330,6 +330,7 @@ async function runSingleAgent(
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	modelOverride: string | undefined,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -348,9 +349,10 @@ async function runSingleAgent(
 	}
 
 	const effectiveCwd = cwd ?? defaultCwd;
+	const effectiveModel = modelOverride ?? agent.model;
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	if (effectiveModel) args.push("--model", effectiveModel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	// Strict skill whitelist: deny all skills by default. Only skills declared on
@@ -385,7 +387,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: effectiveModel,
 		step,
 	};
 
@@ -511,12 +513,14 @@ const TaskItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task to delegate to the agent" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	model: Type.Optional(Type.String({ description: "Override the agent's frontmatter model for this task" })),
 });
 
 const ChainItem = Type.Object({
 	agent: Type.String({ description: "Name of the agent to invoke" }),
 	task: Type.String({ description: "Task with optional {previous} placeholder for prior output" }),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
+	model: Type.Optional(Type.String({ description: "Override the agent's frontmatter model for this step" })),
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -531,6 +535,7 @@ const SubagentParams = Type.Object({
 	chain: Type.Optional(Type.Array(ChainItem, { description: "Array of {agent, task} for sequential execution" })),
 	agentScope: Type.Optional(AgentScopeSchema),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
+	model: Type.Optional(Type.String({ description: "Override the agent's frontmatter model. Used directly in single mode; acts as the default for parallel/chain tasks that don't set their own `model`" })),
 });
 
 export default function (pi: ExtensionAPI) {
@@ -541,6 +546,7 @@ export default function (pi: ExtensionAPI) {
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
 			`Loads agents from both ${path.join(getAgentDir(), "agents")} (user) and ${CONFIG_DIR_NAME}/agents (project). Project agents load without a confirmation prompt.`,
+			"A `model` passed at runtime overrides the agent's frontmatter model (frontmatter is only the default). Top-level `model` applies in single mode and is the default for parallel/chain; per-item `model` overrides per-task.",
 		].join(" "),
 		parameters: SubagentParams,
 
@@ -609,6 +615,7 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						chainUpdate,
 						makeDetails("chain"),
+						step.model ?? params.model,
 					);
 					results.push(result);
 
@@ -687,6 +694,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						},
 						makeDetails("parallel"),
+						t.model ?? params.model,
 					);
 					allResults[index] = result;
 					emitParallelUpdate();
@@ -723,6 +731,7 @@ export default function (pi: ExtensionAPI) {
 					signal,
 					onUpdate,
 					makeDetails("single"),
+					params.model,
 				);
 				const isError = isFailedResult(result);
 				if (isError) {
