@@ -125,8 +125,7 @@ docs/
 │   │   ├── skills/      # project-docs / workflow
 │   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
 │   ├── docs/            # document library (template skeleton, see section above)
-│   ├── codegraph.json   # codegraph config
-│   └── .codegraph/      # codegraph gitignore
+│   └── codegraph.json   # codegraph config
 ├── pisquad              # installer (reads payload from assets/)
 ├── LICENSE              # license file
 ├── README.md            # this file

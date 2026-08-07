@@ -124,8 +124,7 @@ docs/
 │   │   ├── skills/      # project-docs / workflow
 │   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
 │   ├── docs/            # 文档库（模板骨架，详见上节）
-│   ├── codegraph.json   # codegraph 配置
-│   └── .codegraph/      # codegraph gitignore
+│   └── codegraph.json   # codegraph 配置
 ├── pisquad              # 安装器（从 assets/ 读取 payload）
 ├── LICENSE              # 协议文件
 ├── README.md            # 英文 README

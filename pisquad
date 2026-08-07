@@ -137,7 +137,6 @@ if [ "$codegraph_selected" -eq 1 ]; then
   cp "$SEED/assets/codegraph.json" "$DEST/codegraph.json"
   (cd "$DEST/.pi/extensions/codegraph" && npm install)
   (cd "$DEST" && codegraph init)
-  if [ -f "$SEED/assets/.codegraph/.gitignore" ]; then mkdir -p "$DEST/.codegraph"; cp "$SEED/assets/.codegraph/.gitignore" "$DEST/.codegraph/.gitignore"; fi
 fi
 entire_done=0
 if [ "$entire_selected" -eq 1 ]; then
