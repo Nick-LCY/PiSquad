@@ -10,7 +10,7 @@
 
 它要解决的是：在 pi 这类 coding agent 上做稍大一点的项目时，单进程上下文很快被无关噪音填满，文档散落在各处且互相断开，复杂改动缺乏可回溯的检查点。pi-squad 把"分工 + 文档 + 回溯"三件事打包成开箱即用的约定。
 
-两种用法：克隆本仓库作为新项目起点；或仅把 `.pi/` 与 `docs/` 拷贝进现有项目，立刻获得编排与文档约束能力。
+两种用法：运行 `pisquad` 安装器（推荐）；或手动把 `assets/.pi/` 与 `assets/docs/` 拷贝进现有项目，立刻获得编排与文档约束能力。
 
 适合谁：
 - 想用 pi 搭建多代理工作流、但不想从零设计的人
@@ -35,7 +35,7 @@
 
 ## 快速开始
 
-1. 克隆本仓库作为新项目起点，或把 `.pi/` 与 `docs/` 目录拷贝进现有项目。
+1. 通过 `pisquad` 安装器安装（推荐），或把 `assets/.pi/` 与 `assets/docs/` 目录拷贝进现有项目。
 2. （可选）需要代码图能力：在仓库根目录执行 `codegraph init`。
 3. 在仓库目录运行 `pi` —— agents / skills / extensions 会自动加载。
 4. 用自然语言描述你要做的事，主进程会自动编排并委派给合适的 agent。
@@ -114,13 +114,19 @@ docs/
 
 ## 项目结构
 
+> 可分发的 payload 放在 `assets/` 下，这样维护本种子仓库时不会被自身的 `.pi/` 自动加载所污染：根目录是普通仓库，消费者则把 `assets/` 的内容拷到各自根目录。
+
 ```
 .
-├── .pi/                 # pi 配置：agents / skills / extensions 自动加载
-│   ├── agents/          # scout / planner / worker / reviewer / archivist
-│   ├── skills/          # project-docs / workflow
-│   └── extensions/      # subagent / codegraph / entire / wikilink-lint
-├── docs/                # 文档库（模板骨架，详见上节）
+├── assets/              # 可分发的 payload（拷给消费者的内容）
+│   ├── .pi/             # pi 配置：agents / skills / extensions
+│   │   ├── agents/      # scout / planner / worker / reviewer / archivist
+│   │   ├── skills/      # project-docs / workflow
+│   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
+│   ├── docs/            # 文档库（模板骨架，详见上节）
+│   ├── codegraph.json   # codegraph 配置
+│   └── .codegraph/      # codegraph gitignore
+├── pisquad              # 安装器（从 assets/ 读取 payload）
 ├── LICENSE              # 协议文件
 ├── README.md            # 英文 README
 └── README.zh.md         # 本文件

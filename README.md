@@ -10,7 +10,7 @@
 
 It solves this: when working on somewhat larger projects with a coding agent like pi, a single-process context quickly fills with irrelevant noise, documents are scattered everywhere and disconnected from each other, and complex changes lack traceable checkpoints. pi-squad packages the three things — "division of labor + documentation + traceability" — into out-of-the-box conventions.
 
-Two ways to use it: clone this repository as a new project starting point; or copy only `.pi/` and `docs/` into an existing project to immediately gain orchestration and document-constraint capabilities.
+Two ways to use it: run the `pisquad` installer (recommended); or manually copy the `assets/.pi/` and `assets/docs/` directories into an existing project to immediately gain orchestration and document-constraint capabilities.
 
 For whom:
 
@@ -36,7 +36,7 @@ For whom:
 
 ## Quick Start
 
-1. Clone this repository as a new project starting point, or copy the `.pi/` and `docs/` directories into an existing project.
+1. Install via the `pisquad` installer (recommended), or copy the `assets/.pi/` and `assets/docs/` directories into an existing project.
 2. (Optional) For code graph capabilities: run `codegraph init` in the project root.
 3. Run `pi` inside the repository directory — agents / skills / extensions will load automatically.
 4. Describe what you want to do in natural language, and the main process will automatically orchestrate and delegate to the appropriate agent.
@@ -115,13 +115,19 @@ docs/
 
 ## Project Structure
 
+> The distributable payload lives under `assets/` so that working on this seed repo is not contaminated by its own `.pi/` auto-loading. The root stays a plain repo; consumers get `assets/` contents copied to their root.
+
 ```
 .
-├── .pi/                 # pi config: agents / skills / extensions auto-loaded
-│   ├── agents/          # scout / planner / worker / reviewer / archivist
-│   ├── skills/          # project-docs / workflow
-│   └── extensions/      # subagent / codegraph / entire / wikilink-lint
-├── docs/                # document library (template skeleton, see section above)
+├── assets/              # the distributable payload (what ships to consumers)
+│   ├── .pi/             # pi config: agents / skills / extensions
+│   │   ├── agents/      # scout / planner / worker / reviewer / archivist
+│   │   ├── skills/      # project-docs / workflow
+│   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
+│   ├── docs/            # document library (template skeleton, see section above)
+│   ├── codegraph.json   # codegraph config
+│   └── .codegraph/      # codegraph gitignore
+├── pisquad              # installer (reads payload from assets/)
 ├── LICENSE              # license file
 ├── README.md            # this file
 └── README.zh.md         # Chinese README

@@ -112,32 +112,32 @@ if [ "$download_ok" -eq 0 ]; then
 fi
 # 校验种子完整（恒装项 + 可选项按需）
 missing_items=''
-[ -d "$SEED/.pi/agents" ] || missing_items="${missing_items}${missing_items:+、}.pi/agents"
-[ -d "$SEED/.pi/skills" ] || missing_items="${missing_items}${missing_items:+、}.pi/skills"
-[ -f "$SEED/.pi/.gitignore" ] || missing_items="${missing_items}${missing_items:+、}.pi/.gitignore"
-[ -d "$SEED/.pi/extensions/subagent" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/subagent"
-[ -d "$SEED/.pi/extensions/wikilink-lint" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/wikilink-lint"
-[ -d "$SEED/docs" ] || missing_items="${missing_items}${missing_items:+、}docs"
+[ -d "$SEED/assets/.pi/agents" ] || missing_items="${missing_items}${missing_items:+、}.pi/agents"
+[ -d "$SEED/assets/.pi/skills" ] || missing_items="${missing_items}${missing_items:+、}.pi/skills"
+[ -f "$SEED/assets/.pi/.gitignore" ] || missing_items="${missing_items}${missing_items:+、}.pi/.gitignore"
+[ -d "$SEED/assets/.pi/extensions/subagent" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/subagent"
+[ -d "$SEED/assets/.pi/extensions/wikilink-lint" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/wikilink-lint"
+[ -d "$SEED/assets/docs" ] || missing_items="${missing_items}${missing_items:+、}docs"
 if [ "$codegraph_selected" -eq 1 ]; then
-  [ -d "$SEED/.pi/extensions/codegraph" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/codegraph"
-  [ -f "$SEED/codegraph.json" ] || missing_items="${missing_items}${missing_items:+、}codegraph.json"
+  [ -d "$SEED/assets/.pi/extensions/codegraph" ] || missing_items="${missing_items}${missing_items:+、}.pi/extensions/codegraph"
+  [ -f "$SEED/assets/codegraph.json" ] || missing_items="${missing_items}${missing_items:+、}codegraph.json"
 fi
 if [ -n "$missing_items" ]; then printf '%s\n' "错误：种子缺少 ${missing_items}；中止安装以避免留下半安装态。" >&2; exit 1; fi
 if [ "$overwrite" -eq 1 ]; then rm -rf "$DEST/.pi" "$DEST/docs"; fi
 mkdir -p "$DEST/.pi/extensions"
-cp -r "$SEED/.pi/agents" "$DEST/.pi/"
-cp -r "$SEED/.pi/skills" "$DEST/.pi/"
-if [ -f "$SEED/.pi/.gitignore" ]; then cp "$SEED/.pi/.gitignore" "$DEST/.pi/.gitignore"; else printf '%s\n' '错误：种子缺少 .pi/.gitignore。' >&2; exit 1; fi
-cp -r "$SEED/.pi/extensions/subagent" "$DEST/.pi/extensions/"
-cp -r "$SEED/.pi/extensions/wikilink-lint" "$DEST/.pi/extensions/"
+cp -r "$SEED/assets/.pi/agents" "$DEST/.pi/"
+cp -r "$SEED/assets/.pi/skills" "$DEST/.pi/"
+if [ -f "$SEED/assets/.pi/.gitignore" ]; then cp "$SEED/assets/.pi/.gitignore" "$DEST/.pi/.gitignore"; else printf '%s\n' '错误：种子缺少 .pi/.gitignore。' >&2; exit 1; fi
+cp -r "$SEED/assets/.pi/extensions/subagent" "$DEST/.pi/extensions/"
+cp -r "$SEED/assets/.pi/extensions/wikilink-lint" "$DEST/.pi/extensions/"
 # docs 文档：目标已有 docs/ 时由覆盖分支已删；此处直接拷贝即可，不会嵌套
-cp -r "$SEED/docs" "$DEST/docs"
+cp -r "$SEED/assets/docs" "$DEST/docs"
 if [ "$codegraph_selected" -eq 1 ]; then
-  cp -r "$SEED/.pi/extensions/codegraph" "$DEST/.pi/extensions/"
-  cp "$SEED/codegraph.json" "$DEST/codegraph.json"
+  cp -r "$SEED/assets/.pi/extensions/codegraph" "$DEST/.pi/extensions/"
+  cp "$SEED/assets/codegraph.json" "$DEST/codegraph.json"
   (cd "$DEST/.pi/extensions/codegraph" && npm install)
   (cd "$DEST" && codegraph init)
-  if [ -f "$SEED/.codegraph/.gitignore" ]; then mkdir -p "$DEST/.codegraph"; cp "$SEED/.codegraph/.gitignore" "$DEST/.codegraph/.gitignore"; fi
+  if [ -f "$SEED/assets/.codegraph/.gitignore" ]; then mkdir -p "$DEST/.codegraph"; cp "$SEED/assets/.codegraph/.gitignore" "$DEST/.codegraph/.gitignore"; fi
 fi
 entire_done=0
 if [ "$entire_selected" -eq 1 ]; then
