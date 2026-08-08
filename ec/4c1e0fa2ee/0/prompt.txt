@@ -1,0 +1,66 @@
+开始第二阶段。
+
+---
+
+Task: ## 任务：第二阶段第一批（task 09 diff/backup + task 10 version 比较）
+
+pisquad CLI 第二阶段（upgrade 全套）的第一批，做 upgrade 的基础设施。MVP（阶段 1）已完成并经 review 修复。本批只做 lib，不碰命令注册（upgrade 命令在 task 11）。
+
+### 先读上下文（必读）
+- `docs/tasks/pisquad-cli/09-diff-and-backup.md`、`docs/tasks/pisquad-cli/10-state-read-compare.md`
+- `docs/prds/pisquad-cli.md`（决策 6/8/9/10：upgrade 安全机制、docs 纳入 diff、不向后兼容）
+- `docs/conventions/install-state.md`
+- **现有 lib（务必读，确保衔接）**：`src/lib/version.ts`（readState 已导出、writeState 已有）、`src/lib/copy.ts`（已有 lstatSync+onSkip）、`src/lib/fs-safe.ts`、`src/lib/paths.ts`、`src/lib/assets.ts`、`src/lib/env.ts`（参考其 execCapture 子进程模式）
+
+按 09 → 10 顺序，各自 commit。
+
+---
+
+### Commit 1 — `feat(cli): add diff and backup lib`（task 09）
+
+实现 `src/lib/diff.ts` + `src/lib/backup.ts`。
+
+**diff.ts**：
+- `sha256File(p)` / `sha256Dir(p, opts?)`：递归算每个文件 sha256（`node:crypto`），返回 `{ relPath: hash }` 映射
+- `diffTree(target, pkgIncludes, opts?)`：比较多个子树对。`pkgIncludes: Array<{ pkgSubPath, targetSubPath }>` **必须显式包含 docs 子树**（`assets/docs/` ↔ `<target>/docs/`）——这是 PRD 决策 9 的硬要求，docs 是消费者高频修改区
+- 返回 `DiffPlan`：`{ modified: [{relPath,fromHash,toHash}], added: [{relPath,toHash}], removed: [{relPath,fromHash}], unchanged: [{relPath}] }`
+- `ignorePattern`：忽略运行时产物（`node_modules/`、`.pisquad/`、`.codegraph/`、`.entire/`、`.DS_Store`）——不算用户修改
+- **设计耦合点**：`diffTree` 返回的 `modified`（+将被删的 `removed`）列表，要能直接喂给 backup 的 `createBackup`，作为备份清单
+
+**backup.ts**：
+- `createBackup(target, files, label)`：把指定文件打成 tar.gz 写到 `<target>/.pi/.pisquad/backups/<iso>-<label>.tar.gz`；tar 内路径相对 `<target>`；写完打印备份路径与文件数
+- `listBackups(target)`、`pruneBackup(target, before)`（本期不自动调用，预留接口）
+- **tar.gz 实现方式**：优先系统 `tar` CLI（`execFile`，减少 npm 依赖）；先检测 `tar` 可用性，不可用则抛错（backup 失败会阻断 upgrade，符合安全设计）。若你判断需要更强跨平台可靠性，可选 `tar` npm 包（加到 dependencies 并在报告说明理由）——但默认走系统 tar
+- 文件名时间戳去掉 `:` 与 `.`（参考 conventions/install-state.md 命名规则）
+
+**验证（通过才 commit）**：tsc + build exit 0；用 tsx 构造 pkg 树和 target 树（含 docs 子树、含 modified/added/removed/unchanged 各类文件、含一个 node_modules 产物验证被忽略），跑 diffTree 验证分类正确 **且 docs 子树被纳入**；createBackup 生成 tar.gz，用 `tar tzf` 列出内容确认含预期文件。
+
+---
+
+### Commit 2 — `feat(cli): add version comparison and state requirement`（task 10）
+
+补 `src/lib/version.ts`。
+
+**现状（C3 修复后，不要破坏）**：`readState(target)` 已导出，返回 `InstallState | undefined`（缺失/损坏返回 undefined，**install 在用它，不要改成抛错**）。`readCliVersion` / `resolveAssetsVersion` / `writeState` 已有。
+
+**要补**：
+- `compareVersions(prev: InstallState, next: { version; cliVersion; channels }): VersionDiff`：返回 `{ versionChanged: boolean, cliVersionChanged: boolean, newChannels: Array<keyof Channels>, removedChannels: Array<keyof Channels }`（按 task 10 定义；channels 增减对比可选 channel codegraph/entire，core 恒在不算）
+- `requireState(target): InstallState`：内部调 `readState`，返回 undefined 则**抛 `StateMissingError`**（清晰 message，含 `not installed, run pisquad install first`）。这是 task 10"readState 缺失抛错"语义的落地方式——通过 `requireState` 给 upgrade 用，而 install 继续用返回 undefined 的 `readState`，两者不冲突
+- 定义并导出 `StateMissingError`（自定义 Error 子类，便于 upgrade 命令 catch）
+- 确认 `readAssetsVersion` / `readCliVersion` 已从 version.ts 导出齐全（upgrade 命令要用）
+
+**验证（通过才 commit）**：tsc + build exit 0；tsx 跑 compareVersions（构造 prev/next 验证 versionChanged/cliVersionChanged、channels 增减）；requireState 在有 state 时正常返回、无 state 时抛 StateMissingError（message 含 "not installed"）。
+
+---
+
+### 总体要求
+- 2 个 commit，按顺序，各自验证后提交
+- conventional commits、英文
+- TS strict、ESM、导入带 `.js` 扩展名
+- **不要碰** `docs/`、`assets/`（除已存在的 `assets-version.txt`）、`install.ts`、命令注册（upgrade 命令是 task 11 的事）
+- 遇到冲突或未覆盖细节，按 PRD/conventions 自行合理决策，报告里说明
+
+### 完成后报告
+- 每个 commit 的 hash、改了哪些文件
+- 每个 commit 的验证结果（实际输出：diffTree 分类、tar 内容、compareVersions 结果、requireState 抛错）
+- 自行决策点（尤其 tar 实现方式的选择）、遗留问题
