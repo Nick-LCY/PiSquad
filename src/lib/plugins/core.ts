@@ -46,6 +46,21 @@ export async function installCore(target: string, opts: PluginOptions): Promise<
     logger.info(`copied ${sub} → .pi/${sub}`);
   }
 
+  // Docs payload lives at assets/docs/ and is part of the core channel
+  // (always installed). Consumers treat <target>/docs/ as the documentation
+  // library template — see docs/conventions/.
+  const docsSource = resolveAsset("docs");
+  const docsDestination = join(target, "docs");
+  if (!existsSync(docsSource)) {
+    logger.warn(`Skipping missing asset directory: ${docsSource}`);
+  } else if (opts.dryRun) {
+    copyDir(docsSource, docsDestination, { dryRun: true });
+    logger.info(`[dry-run] copy docs → docs`);
+  } else {
+    copyDir(docsSource, docsDestination);
+    logger.info(`copied docs → docs`);
+  }
+
   for (const sub of EXTENSION_DIRS) {
     const source = join(baseAsset, sub);
     const destination = join(target, ".pi", sub);
