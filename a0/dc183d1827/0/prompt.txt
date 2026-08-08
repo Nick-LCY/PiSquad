@@ -1,0 +1,287 @@
+pisquad现在基本框架已经齐全。我现在主要想要增强一下可执行文件的功能，我们来讨论如何执行，具体需求如下：
+1. 现在的界面太简陋了，我希望完成一个更好的交互式引导界面
+2. 我希望增加一个upgrade功能，使用起来类似pisquad upgrade这样。
+
+我在考虑现在是不是可以把pisquad这个单纯的bash脚本升级成一个更完整的命令行工具，可能用python你
+
+---
+
+pisquad现在基本框架已经齐全。我现在主要想要增强一下可执行文件的功能，我们来讨论如何执行，具体需求如下：
+1. 现在的界面太简陋了，我希望完成一个更好的交互式引导界面
+2. 我希望增加一个upgrade功能，使用起来类似pisquad upgrade这样。
+
+我在考虑现在是不是可以把pisquad这个单纯的bash脚本升级成一个更完整的命令行工具，可能用python或者ts来编写。
+
+---
+
+Task: 侦察 pisquad 可执行文件的当前实现。请定位并完整梳理：
+
+1. pisquad 主脚本（bash）的位置、整体结构、shebang、主要函数划分
+2. 当前支持哪些命令/子命令（install / help / 其它？），各自做了什么
+3. 安装与引导逻辑的细节：它如何选择目标路径、如何拷贝/写入文件、是否依赖 assets/ 目录、安装后做了什么（PATH 提示？校验？）
+4. "交互式引导界面"现在的样子：有没有任何交互式提示（read/select/确认），用户体验上的简陋之处
+5. assets/ 目录的结构与内容（哪些文件是发布物）
+6. 脚本的行数规模、依赖的外部命令（curl/git/awk 等）、是否有版本号管理机制
+7. curl|bash 一键安装的入口脚本（如果有单独的远程安装脚本）在哪、长什么样
+
+请返回压缩后的结构化上下文，包含关键代码片段与文件路径、行号。不要修改任何文件。
+
+---
+
+1. 没问题。
+2. A
+3. 我觉得可以是全部升级。
+4. core不变，只变额外插件。
+5. 行。
+
+---
+
+Task: ## 背景
+
+pi-squad 是基于 pi coding agent 的多 Agent 协作框架。它的可执行文件 `pisquad` 目前是一个 152 行的单文件 bash 安装器，存在诸多缺陷。本任务：**把它升级为一个完整的命令行工具（npm 全局包，TypeScript）**。
+
+先读 `docs/current-state.md`、`docs/architecture/overview.md`、`docs/prds/README.md`、`docs/tasks/README.md` 了解项目约定与产出格式。
+
+## 现状（已由 scout 侦察确认）
+
+- 位置：仓库根 `pisquad`，单文件 bash，`#!/usr/bin/env bash`，`set -euo pipefail`
+- **无子命令分发、无 $1 参数解析**；目标路径硬编码 `pwd`
+- 交互是一个 `while:` 菜单循环：**无颜色、无方向键、必须输数字+回车**；所有 `read` 用 `</dev/tty` 强制读 → **在 CI / 管道里直接 EOF 退出**
+- **无版本号机制**：永远 `curl` 拉 GitHub `main` 分支
+- 入口 = GitHub main 分支根目录的 `pisquad` 文件本身（curl|bash 拉它，它再 curl codeload tarball 拉 assets/）
+- 发布物在 `assets/`：`.pi/`（agents×5、skills×2、extensions×4：subagent/wikilink-lint/entire/codegraph）+ `docs/`（文档库模板）+ `codegraph.json`
+- 拷贝逻辑：core 恒装（agents/skills/.gitignore/subagent/wikilink-lint/docs）；可选 codegraph（cp + npm install + codegraph init）、entire（entire enable --agent pi）
+- ⚠️ **已知 bug**：`extensions/entire/` 目录从未被 cp 进目标 `.pi/extensions/`（只跑了 `entire enable`）
+
+## 已确认的决策（用户已拍板，不要推翻）
+
+1. **语言：TypeScript**
+2. **分发型式：npm 全局包**（`npm i -g pisquad`），主体不再是 curl|bash 单文件；但**保留一个极简 bash bootstrap** 维持 curl|bash 入口（检测 node → 转发到 `npx pisquad@latest` 或提示 `npm i -g`）
+3. **upgrade 语义：全部升级**——既自更新 CLI 工具，也把当前目录（或指定目录）里已安装的 pi-squad 组件同步到最新
+4. **插件可细粒度勾选**：core 锁定不变（始终全装），额外插件 codegraph / entire 可选可勾选
+5. **修复 entire 扩展目录漏 cp 的 bug**
+
+## 地基决策（已定，基于此设计）
+
+**组件（assets/）打包进 npm 包本体。** install / upgrade 都从 npm 包内置资源拷贝，不再运行时 curl GitHub tarball。
+- 理由：组件本就随仓库 assets/ 演进；CLI 版本 = 组件版本，upgrade 版本对应清晰；消除当前自引用冗余；离线可用。
+- npm 包 `files` 字段必须包含 assets/；CLI 通过解析包内路径访问资源。
+
+## 必须满足的约束
+
+A. **upgrade 安全性（重点设计）**：不能静默 `rm -rf` 用户已自定义修改的组件（当前 bash 的 rm -rf+重拷对全新安装 OK，但 upgrade 到已有项目会丢用户对 agent/docs 的修改）。必须设计保护机制，例如：在某处（如目标 `.pi/.pisquad-version`）记录上次安装的 pisquad 版本 → upgrade 时检测本地是否有修改 → 备份后覆盖 + 提示。请给出具体、可落地的方案。
+
+B. **非交互模式**：必须支持 CI / 脚本化（`--yes` / `--with codegraph,entire` / 环境变量），修复当前 `</dev/tty` 在 CI 卡死的毛病。无 tty 时应自动退化为非交互默认行为而非报错退出。
+
+C. **交互体验**：用 `@inquirer/prompts`（checkbox/select + 彩色摘要）。不要 ink 全屏 TUI（对一次性安装流程是过度设计）。
+
+D. **保留 curl|bash**：极简 bash bootstrap 文件（保留仓库根的 curl|bash 可达性），检测 node → 转发。
+
+E. **entire 修复**：勾选 entire 时，既要把 `extensions/entire/` 目录落到目标 `.pi/extensions/`，也要执行 `entire enable --agent pi`。
+
+## 需要你产出的实施计划，覆盖以下方面
+
+1. **npm 包目录结构**：ts 源码组织（CLI 入口/命令分发/各命令模块/assets 资源访问/版本管理/日志与 UI 封装），以及 assets/ 如何与包源码共存（当前 assets/ 在仓库根）
+2. **子命令 API 设计**：install / upgrade / version / help（及无参数默认行为）的参数、标志、行为契约
+3. **install 数据流**：交互模式 vs 非交互模式；core + 可选插件；目标路径解析；覆盖已存在 `.pi/`/`docs/` 的处理
+4. **upgrade 数据流**：CLI 自更新怎么做（npm 自更新策略）+ 项目组件同步怎么做 + 上面约束 A 的安全方案
+5. **版本管理方案**：package.json version → CLI 读 version；如何记录"某项目上次安装的 pisquad 版本"以支持 upgrade 的 diff/提示
+6. **打包与发布**：tsup（或同类）配置、package.json 的 `files` / `bin` / `type` 字段、npm 发布步骤
+7. **仓库结构迁移**：旧 `pisquad` bash 文件如何处理（改造成 bootstrap 还是另放）；新包源码放在仓库哪个位置（根目录直接成包？还是 `cli/` 子目录？权衡对 assets/ 访问与现有 docs/ 的影响）
+8. **文档更新点**：README 的 curl|bash 段、docs 下哪些文件需同步
+9. **风险**：特别关注 upgrade 的数据安全、向后兼容现有已安装项目、entire/codegraph 两个可选插件各自的安装后副作用（npm install / codegraph init / entire enable）
+
+## 待确认项（你无网络权限，请在计划里标注）
+- npm 包名 `pisquad` 是否被占用（我会另行核实，你只需标注为待确认，并给一个备选名建议，如 `@pisquad/cli` 或 `pi-squad`）
+
+## 产出要求
+按你的标准格式（Goal / Plan / Files to Modify / New Files / Risks）产出，但 **Plan 要细化到可拆分为 tasks 的粒度**（后续会由 archivist 沉淀为 PRD + tasks，worker 执行）。只读规划，不要修改任何文件。
+
+---
+
+1. 可以用pisquad。
+2. 可以
+3. 可以，但是我注意到docs其实没有纳入比较的范围，可能这个也需要纳入？
+4. 完全不需要向后兼容
+5. 可以分阶段。
+
+这样还有什么问题吗？
+
+---
+
+可以
+
+---
+
+Task: ## 你的任务总述
+
+为「把 `pisquad` 从 bash 安装器升级为 npm 全局 CLI」这个需求，沉淀以下文档（全部在 `docs/` 下，**不要碰 `assets/`、代码或根目录其它文件**）：
+
+1. **PRD**：`docs/prds/pisquad-cli.md`
+2. **ADR**：`docs/architecture/decisions/0001-pisquad-cli.md`
+3. **新约定**：`docs/conventions/install-state.md`
+4. **任务清单**：`docs/tasks/pisquad-cli/NN-<短名>.md`（按阶段拆，见下方阶段映射）
+5. **看板更新**：`docs/current-state.md`
+
+开始前先 `read` 这些文件了解格式与现状：`docs/current-state.md`、`docs/prds/README.md`、`docs/tasks/README.md`、`docs/architecture/decisions/README.md`、`docs/conventions/README.md`、`docs/architecture/overview.md`。
+
+---
+
+## 背景（给 PRD「背景」段用）
+
+pi-squad 的可执行文件 `pisquad` 目前是一个 152 行的单文件 bash 安装器（仓库根），存在诸多缺陷：无子命令分发、无参数解析、无版本管理；交互界面简陋（无颜色、无方向键、必须输数字+回车，且 `</dev/tty` 在 CI/管道里直接 EOF 退出）；永远 `curl` 拉 GitHub main 分支，版本不可控；还存在一个 bug：勾选 entire 时只跑 `entire enable --agent pi` 却从未把 `extensions/entire/` 目录拷进目标。
+
+需求：把它重写为一个完整的命令行工具，提供更好的交互式引导界面，并增加 `pisquad upgrade` 全量升级能力。
+
+## 已确认的产品决策（写进 PRD「方案」+ ADR「决策」）
+
+1. **语言**：TypeScript
+2. **包名**：`pisquad`（已核实 npm registry 未占用）
+3. **分发型式**：npm 全局包（`npm i -g pisquad`）为主；保留一个极简 bash bootstrap（仓库根 `pisquad` 文件）维持 `curl|bash` 入口——它检测 node 后转发到 `pisquad`（已全局安装）或 `npx pisquad@latest`
+4. **仓库结构**：**根目录即 npm 包根**——`src/`（TS 源码）、`dist/`（构建产物，gitignored）、`package.json`、`tsconfig.json`、`tsup.config.ts`、`.npmignore` 都在根；`assets/` 保持原位（在根）
+5. **assets 内嵌**：组件（`assets/`）打包进 npm 包本体，install/upgrade 都从包内资源拷贝，**不再运行时 curl GitHub tarball**。CLI 版本 = assets 版本，对应清晰
+6. **技术栈**：commander（命令分发）、@inquirer/prompts（交互 checkbox/select）、picocolors（彩色）、tsup（打包）；Node ≥ 18
+7. **CLI 版本 vs assets 版本分离**：state.json 同时记录 `cliVersion`（工具版本）和 `version`（assets 内容版本，来自包内 `assets/.pi/assets-version.txt`）
+8. **upgrade 安全机制**：项目里记 `<target>/.pi/.pisquad/state.json`；upgrade 时用 sha256 diff 检测用户是否改过文件；**覆盖前先 tar.gz 备份到 `<target>/.pi/.pisquad/backups/`**；旧版已安装时 install 拒绝覆盖、强制走 upgrade
+9. **docs 纳入 diff**（重点）：`docs/` 属于 core channel，作为**独立的 diff 子树**，明确路径映射 `assets/docs/ ↔ <target>/docs/`；和 agents/skills 走同一套「改了→备份+覆盖、用户新增的→保留不删」。docs 是消费者高频修改区，这条保护尤其重要
+10. **不向后兼容**：旧 bash 安装的项目无 state.json，upgrade 会报错提示「未安装，请先 install」；**不写迁移工具**
+11. **交互/非交互**：交互用 @inquirer/prompts checkbox 选 codegraph/entire（core 锁死全装）；非交互用 `--yes/--with/--without/--all` + 环境变量 `PISQUAD_WITH/PISQUAD_WITHOUT`；无 tty 自动退化为非交互默认（只装 core），**不再 EOF 卡死**
+12. **entire bug 修复**：勾选 entire 时，既 cp `extensions/entire/` 目录到目标，也执行 `entire enable --agent pi`
+13. **子命令**：`pisquad`（无参 = install） / `install [path]` / `upgrade [path]` / `version` / `help`
+14. **分阶段交付**（见下方阶段映射）
+
+## PRD「非目标」段应包含
+
+- 不做向后兼容 / 迁移工具（旧 bash 安装的项目需重新 install）
+- 不做 ink 全屏 TUI（对一次性安装流程过度设计）
+- 本期不做 `pisquad restore` 子命令（备份先支持手工 `tar xzf` 解压恢复，restore 留待后续）
+- assets/docs/ 与仓库根 docs/ 的自动同步脚本本期不做（保持手工约定）
+
+## PRD「验收标准」段应包含
+
+- [ ] `npm i -g pisquad` 后 `pisquad --version` / `pisquad --help` 正常
+- [ ] `pisquad install` 交互式能方向键勾选 codegraph/entire，core 全装
+- [ ] `pisquad install --yes --with codegraph,entire <dir>` 在无 tty 子进程中退出码 0、不卡死
+- [ ] entire 勾选后目标 `.pi/extensions/entire/index.ts` 实际存在（bug 已修复）
+- [ ] `pisquad upgrade` 在已安装项目：检测到本地修改→生成 tar.gz 备份→覆盖→打印提示；state.json 前进
+- [ ] **docs/ 的修改也被 diff+备份保护**（修改 `<dir>/docs/README.md` 后 upgrade 触发备份）
+- [ ] `npm pack --dry-run` 确认含 `dist/ assets/ README*.md LICENSE pisquad`，不含 `src/ node_modules/ .pi/ docs/`
+- [ ] curl|bash bootstrap 在 node 就绪时正确转发
+
+## ADR 0001 决策清单（按 ADR 模板写：日期/状态:已接受/背景/决策/影响）
+
+把上面「已确认的产品决策」1–14 整理进 ADR。「影响」段写明：仓库根新增 src/dist/及构建配置；组件更新改走 npm 发版；旧项目需重新 install；state.json 与 backups 目录成为约定。
+
+## conventions/install-state.md 内容
+
+约定 `<target>/.pi/.pisquad/` 的内容与规则：
+- `state.json` schema：`{ version: string(assets版本), cliVersion: string, channels: { core: bool, codegraph: bool, entire: bool }, installedAt: ISO, lastUpgradedAt?: ISO }`
+- `backups/<iso>-<label>.tar.gz`：upgrade 覆盖前生成，命名规则，保留策略（本期不自动清理）
+- 用户不应手改 state.json
+- 这是运行时产物，纳入 diff 忽略（不算用户修改）
+
+## 任务拆分（阶段映射）
+
+基于 planner 的实施计划，拆成 `docs/tasks/pisquad-cli/NN-<短名>.md`，每个 task 含 frontmatter（`prd: ../prds/pisquad-cli.md`、`status: todo`）+ 目标/完成标准/依赖。**按以下三个阶段分组**（在 task 标题或正文标注阶段，文件名连续编号 01 起）：
+
+### 第一阶段 · MVP（能装能用）
+- **01 包脚手架**：package.json（name=pisquad, bin, files, engines node≥18, deps: commander/@inquirer/prompts/picocolors, devDeps: typescript/tsup/@types/node）、tsconfig.json、tsup.config.ts、.npmignore、.gitignore 追加 dist/。依赖：无
+- **02 bash bootstrap**：仓库根 `pisquad` 改写为转发脚本（node 检测→pisquad 或 npx pisquad@latest）。依赖：01
+- **03 CLI lib 基础（install 必需子集）**：src/lib/{env,paths,logger,ui,assets,copy,fs-safe}.ts；env 含 isInteractive()/which()/execCapture()；paths 含 resolvePackageRoot()/resolveAsset()/resolveTarget()/stateFile()；ui 含 @inquirer/prompts checkbox + 非交互决策表（--yes/--with/--without/--all 优先级）；非交互默认只装 core、无 tty 自动退化。依赖：01
+- **04 version/state 写入（install 必需子集）**：src/lib/version.ts 的 writeState()（readState/compareVersions/diff/backup 留第二阶段）。依赖：03
+- **05 命令分发与基础命令**：src/{bin,main}.ts + commands/{default,version,help}.ts；commander 注册；无参=install。依赖：03
+- **06 plugins 安装模块（含整个bug修复）**：src/lib/plugins/{core,codegraph,entire}.ts；entire 必须 cp extensions/entire/ 目录（修复 bug）。依赖：03
+- **07 install 命令完整逻辑**：commands/install.ts；交互/非交互；core+可选；覆盖检测（已装则拒绝对覆盖式安装、提示走 upgrade）；dry-run；写 state.json；汇总。依赖：04,05,06
+- **08 README 基础更新**：Quick Start（npm i -g 主推 + curl|bash）、Commands 段、Project Structure 段。依赖：07
+
+### 第二阶段 · upgrade 全套
+- **09 diff 与 backup lib**：src/lib/{diff,backup}.ts；sha256File/sha256Dir/diffTree（含 docs 子树）；createBackup tar.gz 到 .pi/.pisquad/backups/。依赖：03
+- **10 version state 读取与比较**：version.ts 补 readState()/compareVersions()；assets-version.txt 机制。依赖：04,09
+- **11 upgrade 命令完整逻辑（安全机制）**：commands/upgrade.ts；读 state（缺失则报错退出）；计算 diff plan；备份后覆盖；docs/ 纳入 diff；missingInPackage 默认保留、--prune 可删；codegraph extension 变更则重跑 npm install。依赖：09,10
+- **12 CLI 自更新**：src/upgrade/self.ts；检测 global npm→`npm i -g pisquad@latest`；失败退出且不继续 project 同步；--no-self 跳过。依赖：11
+
+### 第三阶段 · 文档与发布
+- **13 文档全面同步**：overview.md（安装器行改 npm CLI）、current-state.md、Upgrade safety 段（README）；**把 docs/ 内 ADR/convention 同步镜像到 assets/docs/**（worker 职责，跨 assets/）。依赖：11,12
+- **14 e2e 验证与发布演练**：本地 self-install / 临时目录 install+upgrade 模拟（含 docs 修改触发备份）/ CI 无 tty 路径 / npm pack --dry-run 检查 / npm publish。依赖：13
+
+## 关键约束（务必在每个相关 task 的「完成标准」里体现）
+
+- **docs 纳入 diff**（task 09/11）：明确 assets/docs/ ↔ <target>/docs/ 路径映射，不能漏
+- **entire bug 修复**（task 06）：cp extensions/entire/ 目录
+- **非交互不卡死**（task 03/07）：无 tty 自动退化，退出码 0
+- **不向后兼容**（task 11）：state 缺失即报错，不做迁移
+
+## current-state.md 更新要点
+
+- 「活跃需求」加一行指向新 PRD
+- 「任务看板」加 `pisquad-cli` 分组（14 个 task，全 todo）
+- 「最近变更」加一条「规划 pisquad CLI 升级（PRD + ADR 0001 + 任务拆分）」
+- 保持轻量（看板不是叙事）
+
+## wikilink 注意
+
+- 写 PRD 引用 task 时，用行内代码描述模式（如 `tasks/pisquad-cli/`），避免对尚未稳定命名的单个 task 写死链
+- 所有 `[[...]]` 目标必须真实存在；创建顺序上先建文件再写引用它的链接
+- 严格遵守 conventions/README.md 的 wikilink 规范（表格内别名转义 `\|`）
+
+---
+
+可以，另外注意commit，做完一件事情就commit一次。
+
+---
+
+Task: ## 任务：实现 pisquad CLI 第一阶段地基（task 01–03）
+
+这是「把 pisquad 从 bash 安装器升级为 npm 全局 CLI」需求的第一批工作。本次只做 3 个 task：包脚手架、bash bootstrap、CLI lib 基础。
+
+## 先读上下文（必读，按顺序）
+
+1. `docs/prds/pisquad-cli.md` — 整体设计、决策、验收标准
+2. `docs/architecture/decisions/0001-pisquad-cli.md` — 14 项决策依据
+3. `docs/conventions/install-state.md` — state.json 约定（lib 设计参考）
+4. `docs/tasks/pisquad-cli/01-package-scaffold.md` — 本次 task 1（完整完成标准在此）
+5. `docs/tasks/pisquad-cli/02-bash-bootstrap.md` — 本次 task 2
+6. `docs/tasks/pisquad-cli/03-cli-lib-foundation.md` — 本次 task 3
+7. 现有 `pisquad`（仓库根 bash 脚本，将被改造成 bootstrap）
+8. `assets/` 目录结构（lib 的 assets/copy 模块要访问这些资源）
+
+**严格遵循各 task 文件的「完成标准」**。task 文件已经写得很细，按它执行即可。
+
+## 执行顺序：01 → 02 → 03
+
+三个 task 的依赖链：01（脚手架）→ 02（bootstrap，需 package.json 的 bin 名）→ 03（lib，需 node 环境与包结构）。
+
+关键点提醒（task 文件里也有）：
+- **01**：`package.json`（name=`pisquad`、`type: module`、`bin`、`files` 含 `dist/ assets/ README*.md LICENSE pisquad`、`engines.node >=18`、deps: `commander` `@inquirer/prompts` `picocolors`、devDeps: `typescript` `tsup` `@types/node`）；`tsconfig.json`（ES2022/NodeNext/strict）；`tsup.config.ts`（入口 `src/bin.ts` → `dist/bin.js`，带 `#!/usr/bin/env node` banner）；`.npmignore`（排除 `src/ tsconfig.json .pi/ docs/ codegraph.json` 等）；`.gitignore` **追加** `dist/`（先 read 现有内容，追加而非覆盖）。为让 01 之后能 build，可放一个最小 `src/bin.ts` 占位（如打印版本）。
+- **02**：把仓库根 `pisquad` 整体改写为 bash bootstrap：保留 shebang + `set -euo pipefail` + node 版本检测（≥18，缺失/过老则退出码 1 + 安装指引）+ 转发逻辑（`command -v pisquad` 命中则 `exec pisquad "$@"`，否则 `exec npx --yes pisquad@latest "$@"`）。
+- **03**：`src/lib/{env,paths,logger,ui,assets,copy,fs-safe}.ts`，具体见 task 文件。重点：`env.isInteractive()` 同时检查 `process.stdin.isTTY` 与 `CI`/`PISQUAD_NO_TTY`；`ui` 的非交互决策表（`--yes`/`--with`/`--without`/`--all` + 环境变量优先级）；**无 tty 自动退化为非交互默认（只装 core）**，绝不 EOF 卡死。
+
+## commit 要求（用户明确强调，务必遵守）
+
+**每完成一个 task（01 / 02 / 03）立即做一次 git commit**，不要把多个 task 混在一个 commit 里。每条 commit 只含该 task 的改动。
+
+- commit message 用 **conventional commits 风格、英文**。先 `git log --oneline -5` 参考现有历史（如 `chore: setup development env`），保持一致。
+- 建议格式：
+  - task 01 → `feat(cli): scaffold npm package and build tooling`
+  - task 02 → `feat(cli): replace bash installer with bootstrap forwarder`
+  - task 03 → `feat(cli): add CLI lib foundation (env/paths/ui/assets/copy)`
+- 每个 task 完成后**先本地验证通过再 commit**（见下方验证）。
+
+## 验证（每个 task 完成后做，通过才 commit）
+
+- **01 后**：`npm install` 成功、`npx tsc --noEmit` 无错、`npm run build`（tsup）能产出 `dist/bin.js`（占位 bin.ts 足够）
+- **02 后**：`bash pisquad --help` 或 `bash pisquad --version` 能触发转发（本地若未 `npm i -g`，会走 npx 路径或给出清晰提示，不报奇怪错误）；node 缺失分支可模拟
+- **03 后**：`npx tsc --noEmit` 无错、`npm run build` 通过；lib 各模块导出齐全且类型正确
+
+## 注意事项
+
+- 这是 dogfooding 项目，仓库根已有 `.pi/` `docs/` 等 pi-squad 工作流文件——**不要破坏它们**。`docs/` 和 `assets/` 的内容本次**不要改**（那是 archivist / 后续 task 的事），唯一例外是 task 02 要改根 `pisquad` 文件。
+- `.gitignore` 用**追加**方式，先 read 再改。
+- TS strict 模式，ESM（`type: module`），文件用 `.ts`，导入带 `.js` 扩展名（NodeNext 规范）。
+- 遇到 task 文件未覆盖的实现细节，按 PRD/ADR 的决策自行合理决策，并在最终报告里说明。
+
+## 完成后报告
+
+- 每个 task（01/02/03）做了什么、对应 commit 的 hash（`git log --oneline -3`）
+- 每步本地验证结果（是否通过）
+- 任何自行决策的点、遗留问题或需要人确认的事项
