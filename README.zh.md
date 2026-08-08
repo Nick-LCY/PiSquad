@@ -65,7 +65,7 @@ pisquad install /path/to/project --all
 |---|---|
 | `pisquad` | 等价于 `pisquad install`。 |
 | `pisquad install [path]` | 把 pi-squad 安装到 `path`（默认 cwd）。 |
-| `pisquad upgrade [path]` | 就地更新现有安装。*（阶段 2 落地 —— 尚未实现；详见 `docs/prds/pisquad-cli.md`）* |
+| `pisquad upgrade [path]` | 就地更新现有安装。 |
 | `pisquad version` | 打印 CLI 与 assets 版本（`pisquad <cliVersion> (assets <version>)`）。 |
 | `pisquad help [command]` | 显示总览或某个子命令的帮助。 |
 
@@ -81,7 +81,20 @@ pisquad install /path/to/project --all
 
 环境变量 `PISQUAD_WITH` 和 `PISQUAD_WITHOUT` 提供同样的开关。当 stdin 不是 tty 且未传任何参数时，安装会自动退化为只装 core（退出码 0），不再因等待 prompt 而卡死。
 
-## 工作原理
+## Upgrade safety
+
+`pisquad upgrade` 会在覆盖文件前保护消费者的修改。检测到文件与已安装的 assets 不一致时，旧内容会以带时间戳的 `*-before-upgrade.tar.gz` 归档到 `.pi/.pisquad/backups/`，归档内路径相对于项目根目录，也包括 `docs/` 文件。
+
+`.pi/.pisquad/state.json` 是安装状态记录，保存 assets 与 CLI 版本、启用的 channel 以及安装/升级时间。它由 pisquad 管理，不应手工修改。字段与备份规则见 [install-state](docs/conventions/install-state.md) 约定。
+
+如果误改或误覆盖了文档，可从备份归档手工恢复，例如：
+
+```bash
+tar xzf .pi/.pisquad/backups/<timestamp>-before-upgrade.tar.gz -C /path/to/project
+```
+
+这是有意保留的手工恢复方式；pisquad 当前尚未提供 `restore` 子命令。
+
 
 **核心铁律**（来自 `workflow` skill）：**主进程是编排者，不是执行者**。它只读取 `docs/` 获取上下文，只负责编排与汇报；所有读代码、写代码、写文档的工作都通过 `subagent` 委派给专职 agent，在**隔离上下文**中完成。
 

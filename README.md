@@ -67,7 +67,7 @@ After install, `pi` inside the repository directory picks up agents / skills / e
 |---|---|
 | `pisquad` | Alias for `pisquad install`. |
 | `pisquad install [path]` | Install pi-squad into `path` (defaults to cwd). |
-| `pisquad upgrade [path]` | Update an existing installation in place. *(stage 2 — not yet implemented; see `docs/prds/pisquad-cli.md`)* |
+| `pisquad upgrade [path]` | Update an existing installation in place. |
 | `pisquad version` | Print CLI and assets versions (`pisquad <cliVersion> (assets <version>)`). |
 | `pisquad help [command]` | Show top-level or per-command help. |
 
@@ -83,7 +83,20 @@ After install, `pi` inside the repository directory picks up agents / skills / e
 
 Environment variables `PISQUAD_WITH` and `PISQUAD_WITHOUT` provide the same knobs without flags. When stdin is not a tty and no flag is given, install automatically falls back to core only (exit 0) instead of hanging on a prompt.
 
-## How It Works
+## Upgrade safety
+
+`pisquad upgrade` protects consumer changes before replacing files. When a file differs from the installed assets, the old content is archived under `.pi/.pisquad/backups/` as a timestamped `*-before-upgrade.tar.gz` file. The archive contains paths relative to the target project, including `docs/` files.
+
+`.pi/.pisquad/state.json` is the installation state record: it tracks the installed assets and CLI versions, enabled channels, and install/upgrade timestamps. It is managed by pisquad and should not be edited by hand. See the [install-state](docs/conventions/install-state.md) convention for the schema and backup rules.
+
+If you need to recover an accidentally changed or overwritten document, restore the old file manually from the backup archive, for example:
+
+```bash
+tar xzf .pi/.pisquad/backups/<timestamp>-before-upgrade.tar.gz -C /path/to/project
+```
+
+The archive is deliberately a manual recovery mechanism; pisquad does not provide a `restore` subcommand yet.
+
 
 **Core iron rule** (from the `workflow` skill): **The main process is an orchestrator, not an executor**. It only reads `docs/` to acquire context, and only handles orchestration and reporting; all code reading, code writing, and document writing work is delegated via `subagent` to specialized agents, completed in **isolated contexts**.
 
