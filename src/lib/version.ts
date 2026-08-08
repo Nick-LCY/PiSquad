@@ -45,6 +45,10 @@ export function readCliVersion(): string {
 /**
  * Resolve the assets content version. Falls back to the CLI version when the
  * assets-version.txt file is not shipped yet (early bootstrap / missing file).
+ *
+ * Use for display / UX paths only. For state writes, prefer `readAssetsVersion`
+ * directly so a missing or unreadable assets-version.txt surfaces as an error
+ * rather than being silently papered over.
  */
 export function resolveAssetsVersion(fallback: string = readCliVersion()): string {
   try {
@@ -54,8 +58,17 @@ export function resolveAssetsVersion(fallback: string = readCliVersion()): strin
   }
 }
 
-/** Read an existing state file; returns undefined when not present or invalid. */
-function readExistingState(target: string): InstallState | undefined {
+/**
+ * Strict reader for <target>/.pi/.pisquad/state.json.
+ *
+ * Returns the parsed state only when every required field has the expected
+ * shape (version, cliVersion, installedAt, channels). When the file is
+ * missing, unparseable, or structurally invalid, returns undefined so the
+ * caller can decide whether to treat the target as not-yet-installed.
+ *
+ * Note: this function never throws — validation failures map to `undefined`.
+ */
+export function readState(target: string): InstallState | undefined {
   const file = stateFile(target);
   if (!pathExists(file)) return undefined;
   try {
@@ -69,6 +82,17 @@ function readExistingState(target: string): InstallState | undefined {
       !parsed.channels ||
       typeof parsed.channels !== "object"
     ) {
+      return undefined;
+    }
+    const channels = parsed.channels as Partial<InstallState["channels"]>;
+    if (
+      channels.core !== true ||
+      typeof channels.codegraph !== "boolean" ||
+      typeof channels.entire !== "boolean"
+    ) {
+      return undefined;
+    }
+    if (parsed.lastUpgradedAt !== undefined && typeof parsed.lastUpgradedAt !== "string") {
       return undefined;
     }
     return parsed as InstallState;
@@ -88,10 +112,10 @@ function readExistingState(target: string): InstallState | undefined {
  * - Writes are atomic (fs-safe.atomicWriteFile)
  */
 export function writeState(target: string, partial: WriteStateInput): InstallState {
-  const existing = readExistingState(target);
+  const existing = readState(target);
   const now = new Date().toISOString();
   const cliVersion = partial.cliVersion ?? existing?.cliVersion ?? readCliVersion();
-  const version = partial.version ?? existing?.version ?? resolveAssetsVersion(cliVersion);
+  const version = partial.version ?? existing?.version ?? readAssetsVersion();
 
   const next: InstallState = {
     version,

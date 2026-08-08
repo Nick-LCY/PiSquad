@@ -4,7 +4,7 @@ import { resolveTarget, stateFile } from "../lib/paths.js";
 import { which } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import { decideChannels, type Channels } from "../lib/ui.js";
-import { writeState, type InstallState } from "../lib/version.js";
+import { writeState, readState } from "../lib/version.js";
 import { installChannels } from "../lib/plugins/index.js";
 
 export interface InstallOptions {
@@ -43,17 +43,6 @@ function printChannelSummary(channels: Channels): void {
   logger.info(`  ${channels.entire ? paintInstalled("entire") : "  entire"}`);
 }
 
-function readExistingState(target: string): InstallState | undefined {
-  const file = stateFile(target);
-  if (!existsSync(file)) return undefined;
-  try {
-    const raw = readFileSync(file, "utf8");
-    return JSON.parse(raw) as InstallState;
-  } catch {
-    return undefined;
-  }
-}
-
 function appendGitignoreRule(target: string): void {
   const gitignore = join(target, ".gitignore");
   if (!existsSync(gitignore)) return;
@@ -90,7 +79,7 @@ export async function installCommand(options: InstallOptions): Promise<void> {
     return;
   }
 
-  const existing = readExistingState(target);
+  const existing = readState(target);
   if (existing) {
     logger.error("pi-squad is already installed in this directory");
     logger.error(`state file: ${stateFile(target)}`);
