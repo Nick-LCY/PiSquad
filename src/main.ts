@@ -41,11 +41,18 @@ program
   .option("--without <channels>", "Comma-separated list of optional channels to disable")
   .option("-y, --yes", "Accept defaults without prompts (reserved; upgrade has no prompts today)")
   .action(async (pathArg: string | undefined, options: Record<string, unknown>) => {
+    // Commander's `--no-self` flag toggles `options.self` to `false`; the
+    // conventional `options.noSelf` key is never set, so we check the negated
+    // property directly here.
+    const noSelf =
+      options.noSelf === true ||
+      options.self === false ||
+      process.env.PISQUAD_NO_SELF === "1";
     await upgradeCommand({
       target: pathArg,
       prune: Boolean(options.prune),
       dryRun: Boolean(options.dryRun),
-      noSelf: Boolean(options.noSelf),
+      noSelf,
       with: typeof options.with === "string" ? options.with : undefined,
       without: typeof options.without === "string" ? options.without : undefined,
       yes: Boolean(options.yes),
