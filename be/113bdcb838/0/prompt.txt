@@ -1,0 +1,71 @@
+可以，就按这个推进。
+
+---
+
+Task: ## 任务：第三阶段（task 13 文档同步 + task 14 e2e/发布演练）—— 收尾
+
+pisquad CLI 化的最后阶段。install/upgrade 全套代码已完成并验收。本阶段做文档同步 + 全面 e2e + 发布演练，**不真发版**。
+
+### 先读上下文
+- `docs/tasks/pisquad-cli/13-docs-sync.md`、`docs/tasks/pisquad-cli/14-e2e-and-publish.md`
+- `docs/prds/pisquad-cli.md`（验收标准）
+- 现有文档：`docs/architecture/overview.md`、`docs/current-state.md`、`README.md`、`README.zh.md`、`docs/conventions/install-state.md`、`assets/docs/` 结构
+
+---
+
+### task 13 — 文档同步（commit 1）
+
+1. **`docs/architecture/overview.md`**：
+   - 概述段：安装器描述从「`pisquad` 安装器（推荐）：支持 `curl | bash`」改为「`pisquad` CLI（推荐）：`npm i -g pisquad`；也兼容 `curl | bash`」
+   - 关键决策段：补一条「pisquad 已从 bash 安装器升级为 npm CLI」，用 wikilink 指向 `[[architecture/decisions/0001-pisquad-cli.md]]`
+2. **`README.md` + `README.zh.md`**：
+   - 增补「Upgrade safety」段：解释 backup 机制（`.pi/.pisquad/backups/`）、`state.json` 用途、误改 docs 的恢复方式（手工 `tar xzf`）
+   - 链接到 install-state 约定——**README 在根目录，用 markdown 链接** `[install-state](docs/conventions/install-state.md)`，**不要用 wikilink**（wikilink 是 docs/ 内部约定）
+   - 确认 Commands 段的 upgrade 描述已不是占位（upgrade 现已实现）
+3. **`assets/docs/` 镜像**（让消费者也拿到这些文档）：
+   - `assets/docs/architecture/overview.md`：与 docs/ 的更新同步
+   - `assets/docs/architecture/decisions/0001-pisquad-cli.md`：从 docs/ 镜像（新建）
+   - `assets/docs/conventions/install-state.md`：从 docs/ 镜像（新建）
+   - **`assets/docs/current-state.md`：保持消费者模板视角，不要镜像本仓库的真实任务进度**（pisquad-cli 的 14 个 task 是本仓库开发记录，不能传染给消费者模板）
+   - assets/docs 内文档互引仍用 wikilink（它们在 docs 语境，过 wikilint）
+4. 验证：`npm run build` + `node dist/bin.js install /tmp/t13 --yes` → `/tmp/t13/docs/` 含更新后的 overview.md、decisions/0001、conventions/install-state.md；清理 /tmp/t13
+
+**commit 1**: `docs: sync overview, README upgrade safety, and mirror to assets/docs`
+
+---
+
+### task 14 — e2e + 发布演练（commit 2 看板；发现 bug 则 fix commit）
+
+**全面 e2e**：
+
+1. **self-install**：`npm run build` + `npm link` → `pisquad --version` 输出包版本
+2. **install --all + upgrade 模拟**（/tmp 临时目录）：
+   - `pisquad install --yes --all /tmp/t14` → state.json + core/codegraph/entire 都装
+   - 改 `/tmp/t14/docs/README.md`（模拟消费者改动）
+   - **临时 bump** `assets/.pi/assets-version.txt`（`0.1.0` → `0.2.0`）+ `npm run build` + 重新 `npm link`（模拟上游新版）
+   - `pisquad upgrade /tmp/t14 --no-self` → 验证：backup `<iso>-before-upgrade.tar.gz` 含 `docs/README.md`（旧内容）；升级后 `/tmp/t14/docs/README.md` 是新版；state.json `lastUpgradedAt` 刷新
+   - **验证后把 `assets/.pi/assets-version.txt` 改回 `0.1.0`**（这个 bump 是临时模拟，不要 commit）
+3. **无 tty CI 路径**：`bash -c 'pisquad install --yes --with codegraph,entire /tmp/t14notty < /dev/null'` → exit 0、不卡死
+4. **`npm pack --dry-run` 内容检查**：列表**必须含** `dist/` `assets/` `README*.md` `LICENSE` `pisquad`；**必须不含** `src/` `node_modules/` `.pi/` `docs/`（根 docs）
+5. **`npm publish --dry-run`**：跑一次，确认 tag/access/registry 正确；**不真发版**
+6. **清理**：`npm rm -g pisquad`（或 `npm unlink`）解除全局安装；删所有 /tmp 临时目录；**确认 `git status` 干净**（assets-version.txt 改回 0.1.0、无残留）
+
+**看板更新**：`docs/current-state.md` 把 pisquad-cli 的 task 01–14 全部标记 done，活跃需求标记完成，最近变更记录「pisquad CLI 化完成」。
+
+**commit 2**: `docs: mark pisquad-cli milestone complete in current-state`
+
+---
+
+### 总体要求
+- task 13 一个 commit（文档），task 14 一个 commit（看板）；如 e2e **发现 bug**，单独 `fix(cli):` commit 并说明
+- **不要 commit 临时变更**（assets-version bump、全局安装产物）——验证后清理，commit 前 `git status` 必须干净
+- npm publish **只 --dry-run**，不真发版
+- conventional commits、英文
+- worker 全能：可改 docs/（过 wikilint）、assets/、README
+
+### 完成后报告
+- 各 commit hash、内容
+- e2e 各项实际输出：`--version`、`install --all` 的 channels、upgrade backup 是否含 `docs/README.md`、无 tty exit 码、`npm pack --dry-run` 的包含/排除清单、`npm publish --dry-run` 结果
+- 是否发现 bug（如有，怎么修的）
+- 清理确认：`git status` 干净、全局安装已解除、assets-version 回到 0.1.0
+- **发布 checklist**（整理一份，留给真实发版用：版本号、npm 登录、tag、publish 命令、发版后验证步骤）
