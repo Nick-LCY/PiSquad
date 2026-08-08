@@ -1,0 +1,46 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "40ce0c649d1a",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/architecture/decisions/0001-pisquad-cli.md",
+    "docs/architecture/decisions/README.md",
+    "docs/conventions/README.md",
+    "docs/conventions/install-state.md",
+    "docs/current-state.md",
+    "docs/prds/README.md",
+    "docs/prds/pisquad-cli.md",
+    "docs/tasks/pisquad-cli/01-package-scaffold.md",
+    "docs/tasks/pisquad-cli/02-bash-bootstrap.md",
+    "docs/tasks/pisquad-cli/03-cli-lib-foundation.md",
+    "docs/tasks/pisquad-cli/04-state-writer.md",
+    "docs/tasks/pisquad-cli/05-command-dispatch.md",
+    "docs/tasks/pisquad-cli/06-plugins-install.md",
+    "docs/tasks/pisquad-cli/07-install-command.md",
+    "docs/tasks/pisquad-cli/08-readme-basics.md",
+    "docs/tasks/pisquad-cli/09-diff-and-backup.md",
+    "docs/tasks/pisquad-cli/10-state-read-compare.md",
+    "docs/tasks/pisquad-cli/11-upgrade-command.md",
+    "docs/tasks/pisquad-cli/12-cli-self-update.md",
+    "docs/tasks/pisquad-cli/13-docs-sync.md",
+    "docs/tasks/pisquad-cli/14-e2e-and-publish.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/40/ce0c649d1a/0/metadata.json",
+      "transcript": "/40/ce0c649d1a/0/full.jsonl",
+      "compact_transcript": "/40/ce0c649d1a/0/transcript.jsonl",
+      "content_hash": "/40/ce0c649d1a/0/content_hash.txt",
+      "prompt": "/40/ce0c649d1a/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 77647,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 755200,
+    "output_tokens": 50165,
+    "api_call_count": 20
+  }
+}

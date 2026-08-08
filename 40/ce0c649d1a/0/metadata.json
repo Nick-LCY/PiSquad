@@ -1,0 +1,59 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "40ce0c649d1a",
+  "session_id": "019fdf83-f462-78d5-9c39-c9a89aaf36c6",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-08T05:15:48.27319643Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "docs/architecture/decisions/0001-pisquad-cli.md",
+    "docs/architecture/decisions/README.md",
+    "docs/conventions/README.md",
+    "docs/conventions/install-state.md",
+    "docs/current-state.md",
+    "docs/prds/README.md",
+    "docs/prds/pisquad-cli.md",
+    "docs/tasks/pisquad-cli/01-package-scaffold.md",
+    "docs/tasks/pisquad-cli/02-bash-bootstrap.md",
+    "docs/tasks/pisquad-cli/03-cli-lib-foundation.md",
+    "docs/tasks/pisquad-cli/04-state-writer.md",
+    "docs/tasks/pisquad-cli/05-command-dispatch.md",
+    "docs/tasks/pisquad-cli/06-plugins-install.md",
+    "docs/tasks/pisquad-cli/07-install-command.md",
+    "docs/tasks/pisquad-cli/08-readme-basics.md",
+    "docs/tasks/pisquad-cli/09-diff-and-backup.md",
+    "docs/tasks/pisquad-cli/10-state-read-compare.md",
+    "docs/tasks/pisquad-cli/11-upgrade-command.md",
+    "docs/tasks/pisquad-cli/12-cli-self-update.md",
+    "docs/tasks/pisquad-cli/13-docs-sync.md",
+    "docs/tasks/pisquad-cli/14-e2e-and-publish.md"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "992b5d63595e",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 77647,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 755200,
+    "output_tokens": 50165,
+    "api_call_count": 20
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-08T05:15:48.219881407Z",
+    "agent_lines": 806,
+    "agent_removed": 7,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 3,
+    "total_committed": 806,
+    "total_lines_changed": 816,
+    "agent_percentage": 99.63235294117648,
+    "metric_version": 2
+  }
+}
