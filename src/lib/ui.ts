@@ -68,28 +68,44 @@ export async function decideChannels(opts: ChannelDecisionOptions = {}): Promise
   if (opts.all) return { core: true, codegraph: true, entire: true };
 
   const explicitWith = values(opts.with);
+  const explicitWithout = values(opts.without);
+  if (explicitWith.length > 0 && explicitWithout.length > 0) {
+    throw new Error("Cannot combine --with and --without");
+  }
+
   if (explicitWith.length > 0) {
     return withChannels(optionalChannels(explicitWith));
   }
 
-  const explicitWithout = values(opts.without);
   if (explicitWithout.length > 0) {
-    const channels = optionalChannels(explicitWithout);
-    return withChannels(new Set<OptionalChannel>());
+    const exclude = optionalChannels(explicitWithout);
+    return {
+      core: true,
+      codegraph: !exclude.has("codegraph"),
+      entire: !exclude.has("entire"),
+    };
   }
 
   if (opts.yes) return { ...coreOnly };
 
   const env = opts.env ?? process.env;
   const environmentWith = values(env.PISQUAD_WITH);
+  const environmentWithout = values(env.PISQUAD_WITHOUT);
+  if (environmentWith.length > 0 && environmentWithout.length > 0) {
+    throw new Error("Cannot combine PISQUAD_WITH and PISQUAD_WITHOUT");
+  }
+
   if (environmentWith.length > 0) {
     return withChannels(optionalChannels(environmentWith));
   }
 
-  const environmentWithout = values(env.PISQUAD_WITHOUT);
   if (environmentWithout.length > 0) {
-    optionalChannels(environmentWithout);
-    return { ...coreOnly };
+    const exclude = optionalChannels(environmentWithout);
+    return {
+      core: true,
+      codegraph: !exclude.has("codegraph"),
+      entire: !exclude.has("entire"),
+    };
   }
 
   if (isInteractive()) return promptChannels(opts.target);
