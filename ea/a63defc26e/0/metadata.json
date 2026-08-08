@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "eaa63defc26e",
+  "session_id": "019fdf83-f462-78d5-9c39-c9a89aaf36c6",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-08T05:20:39.213329744Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/lib/plugins/codegraph.ts",
+    "src/lib/plugins/core.ts",
+    "src/lib/plugins/entire.ts",
+    "src/lib/plugins/index.ts",
+    "src/lib/plugins/types.ts"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "992b5d63595e",
+  "checkpoint_transcript_start": 62,
+  "transcript_lines_at_start": 62,
+  "compact_transcript_start": 27,
+  "token_usage": {
+    "input_tokens": 0,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "output_tokens": 0,
+    "api_call_count": 0
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-08T05:20:39.153283459Z",
+    "agent_lines": 256,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 256,
+    "total_lines_changed": 256,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
