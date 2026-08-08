@@ -10,7 +10,7 @@
 
 它要解决的是：在 pi 这类 coding agent 上做稍大一点的项目时，单进程上下文很快被无关噪音填满，文档散落在各处且互相断开，复杂改动缺乏可回溯的检查点。pi-squad 把"分工 + 文档 + 回溯"三件事打包成开箱即用的约定。
 
-两种用法：运行 `pisquad` 安装器（推荐）；或手动把 `assets/.pi/` 与 `assets/docs/` 拷贝进现有项目，立刻获得编排与文档约束能力。
+两种用法：通过 `pisquad` CLI 安装（推荐，见[快速开始](#快速开始)）；或手动把 `assets/.pi/` 与 `assets/docs/` 拷贝进现有项目，立刻获得编排与文档约束能力。
 
 适合谁：
 - 想用 pi 搭建多代理工作流、但不想从零设计的人
@@ -35,10 +35,51 @@
 
 ## 快速开始
 
-1. 通过 `pisquad` 安装器安装（推荐），或把 `assets/.pi/` 与 `assets/docs/` 目录拷贝进现有项目。
-2. （可选）需要代码图能力：在仓库根目录执行 `codegraph init`。
-3. 在仓库目录运行 `pi` —— agents / skills / extensions 会自动加载。
-4. 用自然语言描述你要做的事，主进程会自动编排并委派给合适的 agent。
+推荐路径走 npm 分发的 CLI：
+
+```bash
+npm i -g pisquad
+pisquad install .            # 安装到当前目录
+```
+
+如果机器上已经有 Node.js ≥ 18 但不方便 `npm i -g`，仓库自带的 bash bootstrap 仍然可用：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/earendil-works/pisquad/main/pisquad | bash
+# bootstrap 会检测 node，然后转发到全局的 `pisquad` 或 `npx pisquad@latest`
+```
+
+交互流程会带你选择可选 channel（codegraph / entire）。CI / 管道场景可以用 `--yes`（只装 core）或显式指定：
+
+```bash
+pisquad install /path/to/project --yes
+pisquad install /path/to/project --with codegraph,entire
+pisquad install /path/to/project --all
+```
+
+安装完成后，在仓库目录里运行 `pi` —— agents / skills / extensions 会自动加载。需要代码图能力时在项目根目录跑一次 `codegraph init`。用自然语言描述你要做的事，主进程会自动编排并委派给合适的 agent。
+
+## 命令
+
+| 命令 | 说明 |
+|---|---|
+| `pisquad` | 等价于 `pisquad install`。 |
+| `pisquad install [path]` | 把 pi-squad 安装到 `path`（默认 cwd）。 |
+| `pisquad upgrade [path]` | 就地更新现有安装。*（阶段 2 落地 —— 尚未实现；详见 `docs/prds/pisquad-cli.md`）* |
+| `pisquad version` | 打印 CLI 与 assets 版本（`pisquad <cliVersion> (assets <version>)`）。 |
+| `pisquad help [command]` | 显示总览或某个子命令的帮助。 |
+
+### `pisquad install` 参数
+
+| 参数 | 作用 |
+|---|---|
+| `-y, --yes` | 非交互；只装 core。 |
+| `--with a,b` | 要安装的可选 channel（逗号分隔），core 始终安装。 |
+| `--without a,b` | 跳过的可选 channel（逗号分隔）。 |
+| `--all` | 装所有可选 channel。 |
+| `--dry-run` | 预演变更，不实际写入。 |
+
+环境变量 `PISQUAD_WITH` 和 `PISQUAD_WITHOUT` 提供同样的开关。当 stdin 不是 tty 且未传任何参数时，安装会自动退化为只装 core（退出码 0），不再因等待 prompt 而卡死。
 
 ## 工作原理
 
@@ -114,7 +155,7 @@ docs/
 
 ## 项目结构
 
-> 可分发的 payload 放在 `assets/` 下，这样维护本种子仓库时不会被自身的 `.pi/` 自动加载所污染：根目录是普通仓库，消费者则把 `assets/` 的内容拷到各自根目录。
+> 可分发的 payload 放在 `assets/` 下，这样维护本种子仓库时不会被自身的 `.pi/` 自动加载所污染：根目录是普通仓库，消费者则把 `assets/` 的内容拷到各自根目录。同时根目录也是 npm 包根：CLI 以构建产物（`dist/`）+ 内联 payload（`assets/`）的形式发布。
 
 ```
 .
@@ -125,7 +166,13 @@ docs/
 │   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
 │   ├── docs/            # 文档库（模板骨架，详见上节）
 │   └── codegraph.json   # codegraph 配置
-├── pisquad              # 安装器（从 assets/ 读取 payload）
+├── pisquad              # bash bootstrap（转发到全局 `pisquad` 或 `npx pisquad@latest`）
+├── src/                 # CLI 的 TypeScript 源码（`bin.ts`、`main.ts`、`commands/`、`lib/`）
+├── dist/                # 构建产物（gitignored，打包进 npm tarball）
+├── package.json         # npm 包元信息与依赖清单
+├── tsconfig.json        # TypeScript 配置（strict，ESM，NodeNext）
+├── tsup.config.ts       # 构建配置（单文件 ESM bundle）
+├── .npmignore           # npm 打包排除规则
 ├── LICENSE              # 协议文件
 ├── README.md            # 英文 README
 └── README.zh.md         # 本文件

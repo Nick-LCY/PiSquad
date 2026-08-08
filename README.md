@@ -10,7 +10,7 @@
 
 It solves this: when working on somewhat larger projects with a coding agent like pi, a single-process context quickly fills with irrelevant noise, documents are scattered everywhere and disconnected from each other, and complex changes lack traceable checkpoints. pi-squad packages the three things — "division of labor + documentation + traceability" — into out-of-the-box conventions.
 
-Two ways to use it: run the `pisquad` installer (recommended); or manually copy the `assets/.pi/` and `assets/docs/` directories into an existing project to immediately gain orchestration and document-constraint capabilities.
+Two ways to use it: install via the `pisquad` CLI (recommended; see [Quick Start](#quick-start)); or manually copy the `assets/.pi/` and `assets/docs/` directories into an existing project to immediately gain orchestration and document-constraint capabilities.
 
 For whom:
 
@@ -36,10 +36,52 @@ For whom:
 
 ## Quick Start
 
-1. Install via the `pisquad` installer (recommended), or copy the `assets/.pi/` and `assets/docs/` directories into an existing project.
-2. (Optional) For code graph capabilities: run `codegraph init` in the project root.
-3. Run `pi` inside the repository directory — agents / skills / extensions will load automatically.
-4. Describe what you want to do in natural language, and the main process will automatically orchestrate and delegate to the appropriate agent.
+The recommended path uses the npm-distributed CLI:
+
+```bash
+npm i -g pisquad
+pisquad install .            # install into the current directory
+```
+
+If Node.js ≥ 18 is already on the box but `npm i -g` is not an option, the bash bootstrap in this repo still works:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/earendil-works/pisquad/main/pisquad | bash
+# bootstrap detects node and forwards to `pisquad` (if globally installed)
+# or `npx pisquad@latest`
+```
+
+The interactive flow then walks you through picking the optional channels (codegraph / entire). For CI / pipelines, skip the prompts with `--yes` (core only) or pin a selection explicitly:
+
+```bash
+pisquad install /path/to/project --yes
+pisquad install /path/to/project --with codegraph,entire
+pisquad install /path/to/project --all
+```
+
+After install, `pi` inside the repository directory picks up agents / skills / extensions automatically. For code graph capabilities, run `codegraph init` in the project root once. Describe what you want to do in natural language, and the main process will orchestrate and delegate to the appropriate agent.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `pisquad` | Alias for `pisquad install`. |
+| `pisquad install [path]` | Install pi-squad into `path` (defaults to cwd). |
+| `pisquad upgrade [path]` | Update an existing installation in place. *(stage 2 — not yet implemented; see `docs/prds/pisquad-cli.md`)* |
+| `pisquad version` | Print CLI and assets versions (`pisquad <cliVersion> (assets <version>)`). |
+| `pisquad help [command]` | Show top-level or per-command help. |
+
+### `pisquad install` flags
+
+| Flag | Effect |
+|---|---|
+| `-y, --yes` | Non-interactive; install core only. |
+| `--with a,b` | Comma-separated list of optional channels to install (core always installed). |
+| `--without a,b` | Comma-separated list of optional channels to skip. |
+| `--all` | Install every optional channel. |
+| `--dry-run` | Preview the changes without writing anything. |
+
+Environment variables `PISQUAD_WITH` and `PISQUAD_WITHOUT` provide the same knobs without flags. When stdin is not a tty and no flag is given, install automatically falls back to core only (exit 0) instead of hanging on a prompt.
 
 ## How It Works
 
@@ -115,7 +157,7 @@ docs/
 
 ## Project Structure
 
-> The distributable payload lives under `assets/` so that working on this seed repo is not contaminated by its own `.pi/` auto-loading. The root stays a plain repo; consumers get `assets/` contents copied to their root.
+> The distributable payload lives under `assets/` so that working on this seed repo is not contaminated by its own `.pi/` auto-loading. The root stays a plain repo; consumers get `assets/` contents copied to their root. The root is also the npm package: the CLI ships built artifacts (`dist/`) plus the inlined payload (`assets/`).
 
 ```
 .
@@ -126,7 +168,13 @@ docs/
 │   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
 │   ├── docs/            # document library (template skeleton, see section above)
 │   └── codegraph.json   # codegraph config
-├── pisquad              # installer (reads payload from assets/)
+├── pisquad              # bash bootstrap (forwards to global `pisquad` or `npx pisquad@latest`)
+├── src/                 # TypeScript source for the CLI (`bin.ts`, `main.ts`, `commands/`, `lib/`)
+├── dist/                # built CLI output (gitignored; bundled into the npm tarball)
+├── package.json         # npm package metadata + dependency manifest
+├── tsconfig.json        # TypeScript configuration (strict, ESM, NodeNext)
+├── tsup.config.ts       # build configuration (single-file ESM bundle)
+├── .npmignore           # files excluded from the npm package
 ├── LICENSE              # license file
 ├── README.md            # this file
 └── README.zh.md         # Chinese README
