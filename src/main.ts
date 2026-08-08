@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { readCliVersion } from "./lib/version.js";
 import { installCommand } from "./commands/install.js";
+import { upgradeCommand } from "./commands/upgrade.js";
 import { versionCommand } from "./commands/version.js";
 import { helpCommand } from "./commands/help.js";
 
@@ -27,6 +28,27 @@ program
       without: typeof options.without === "string" ? options.without : undefined,
       all: Boolean(options.all),
       dryRun: Boolean(options.dryRun),
+    });
+  });
+
+program
+  .command("upgrade [path]")
+  .description("Upgrade an existing pi-squad install to match the current assets")
+  .option("--prune", "Delete files in target that are no longer in assets (backed up first)")
+  .option("--dry-run", "Preview the upgrade plan without writing anything")
+  .option("--no-self", "Skip the CLI self-update stage")
+  .option("--with <channels>", "Comma-separated list of optional channels to enable")
+  .option("--without <channels>", "Comma-separated list of optional channels to disable")
+  .option("-y, --yes", "Accept defaults without prompts (reserved; upgrade has no prompts today)")
+  .action(async (pathArg: string | undefined, options: Record<string, unknown>) => {
+    await upgradeCommand({
+      target: pathArg,
+      prune: Boolean(options.prune),
+      dryRun: Boolean(options.dryRun),
+      noSelf: Boolean(options.noSelf),
+      with: typeof options.with === "string" ? options.with : undefined,
+      without: typeof options.without === "string" ? options.without : undefined,
+      yes: Boolean(options.yes),
     });
   });
 

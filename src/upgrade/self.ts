@@ -26,6 +26,12 @@ import type { Logger } from "../lib/plugins/types.js";
 export interface SelfUpdateDeps {
   which?: (cmd: string) => string | null;
   execCapture?: (cmd: string, args?: string[]) => Promise<ExecCaptureResult>;
+  /**
+   * Override the actual `npm install -g` runner. The default spawns npm with
+   * a 2-minute timeout; tests inject a stub that returns a synthetic
+   * ExecCaptureResult so no real npm process is ever spawned.
+   */
+  runNpmInstallGlobal?: () => Promise<ExecCaptureResult>;
 }
 
 export interface SelfUpdateOptions {
@@ -166,7 +172,7 @@ export async function selfUpdate(opts: SelfUpdateOptions = {}): Promise<SelfUpda
   logger.info(`Updating pisquad via npm install -g (timeout ${NPM_TIMEOUT_MS / 1000}s)`);
   let result: ExecCaptureResult;
   try {
-    result = await runNpmInstallGlobal();
+    result = await (opts.deps?.runNpmInstallGlobal ?? runNpmInstallGlobal)();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`self-update failed: ${message}`);
