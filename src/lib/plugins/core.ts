@@ -5,20 +5,26 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { PluginOptions } from "./types.js";
 
+/**
+ * Core-only extension directories. Only the always-on extensions ship with
+ * the core channel. Optional extensions (codegraph, entire) are copied by
+ * their own channel plugins (`installCodegraph`, `installEntire`) so that
+ * `--yes` (core only) never copies code whose `node_modules` we cannot ship.
+ */
 const EXTENSION_DIRS = new Set([
   "extensions/subagent",
   "extensions/wikilink-lint",
-  "extensions/codegraph",
-  "extensions/entire",
 ]);
 
 /**
- * Copy the "core" payload (agents, skills, every extension's source tree).
+ * Copy the "core" payload (agents, skills, only the always-on extensions
+ * subagent + wikilink-lint source trees).
  *
- * node_modules and package-lock.json are stripped from extension directories
- * during the core copy — `installCodegraph` materialises them via `npm install`
- * when the channel is enabled, and the entire/subagent/wikilink-lint extensions
- * have no runtime dependencies of their own.
+ * The optional codegraph / entire extensions are NOT copied here — they are
+ * installed by their own channel plugins when the user passes `--with`. This
+ * keeps the core payload stable per the PRD decision "core locked, codegraph /
+ * entire optional", and avoids shipping codegraph source without its
+ * `node_modules` (which would break `import typebox` at pi load time).
  */
 export async function installCore(target: string, opts: PluginOptions): Promise<void> {
   const logger = opts.logger;
