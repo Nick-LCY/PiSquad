@@ -1,0 +1,74 @@
+我现在要如何在npm发版？
+
+---
+
+npm error code E403
+npm error 403 403 Forbidden - PUT https://registry.npmjs.org/pisquad - Package name too similar to existing package pi-squad; try renaming your package to '@nicklin/pisquad' and publishing with 'npm publish --access=public' instead
+npm error 403 In most cases, you or one of your dependencies are requesting
+npm error 403 a package version that is forbidden by your security policy, or
+npm error 403 on a server you do not have access to.
+npm error A complete log of this run can be found in: /home/sankabox/.npm/_logs/2026-08-08T15_21_35_305Z-debug-0.log
+
+npm publish 被拒绝了
+
+---
+
+是的，改吧。
+
+---
+
+Task: ## 任务：npm 包名改为 scoped `@nicklin/pisquad`
+
+`npm publish` 被拒：`pisquad` 与已存在的 `pi-squad` 太相似（npm 相似性规则）。改用 scoped 包名 `@nicklin/pisquad`。
+
+**铁律：只改「npm 包名」相关引用；命令名 `pisquad`（bin）保持不变。** `bin` 字段 key、`command -v pisquad`、所有 `pisquad install/upgrade/...` 命令调用都**不要动**。
+
+### 先定位所有需改的引用
+用 grep 找全：
+```bash
+grep -rn "pisquad@latest" --include="*.ts" --include="*.md" --include="*.json" --include="pisquad" .
+grep -rn "npm i -g pisquad\|npm install -g pisquad\|npm i -g \"pisquad\|npx pisquad" --include="*.ts" --include="*.md" --include="*.json" --include="pisquad" .
+```
+把这些「npm 包名语境」的 `pisquad`（裸包名，非命令名）改为 `@nicklin/pisquad`。
+
+### 具体改动清单
+
+1. **`package.json`**：
+   - `"name": "pisquad"` → `"name": "@nicklin/pisquad"`
+   - 新增 `"publishConfig": { "access": "public" }`（scoped 包默认私有，加这个让 `npm publish` 默认公开，省去每次 `--access=public`）
+   - **`bin` 字段 key 保持 `"pisquad"`**（命令名不变）
+2. **根 `pisquad`（bash bootstrap）**：
+   - `npx --yes pisquad@latest` → `npx --yes @nicklin/pisquad@latest`
+   - `command -v pisquad` **不变**（bin 名仍是 pisquad）
+3. **`src/upgrade/self.ts`**：
+   - `npm install -g pisquad@latest`（或 `["install","-g","pisquad@latest",...]`）→ 改为 `@nicklin/pisquad@latest`
+   - `which("pisquad")` 检测逻辑**不变**（检测的是 bin 名 pisquad，不受包名影响）
+4. **`README.md` + `README.zh.md`**：所有 `npm i -g pisquad` → `npm i -g @nicklin/pisquad`（curl|bash 的 raw URL 不变，因为 bootstrap 文件名仍 `pisquad`）
+5. **`docs/` 文档**（`architecture/overview.md`、`architecture/decisions/0001-pisquad-cli.md`、`current-state.md` 等提到 `npm i -g pisquad` 的地方）：改为 `@nicklin/pisquad`
+6. **`docs/architecture/decisions/0001-pisquad-cli.md` 决策 2**：把「包名定为 `pisquad`」更新为「包名 `@nicklin/pisquad`（scoped）」，并加一句注：原定 unscoped `pisquad`，因 npm 包名相似性规则（与现有 `pi-squad` 冲突）改为 scoped `@nicklin/pisquad`；bin 命令名保持 `pisquad`
+7. **`assets/docs/` 镜像同步**：把 docs/ 里改过的（overview.md、decisions/0001、current-state 相关）同步到 assets/docs/ 对应文件
+
+### 不要改的（容易误伤）
+- `package.json` 的 `bin` key（`"pisquad"`）
+- bash bootstrap 的 `command -v pisquad`
+- 所有 `pisquad install` / `pisquad upgrade` / `pisquad --version` 等**命令调用示例**（这是命令名，不是包名）
+- `which("pisquad")`、`execFile("pisquad", ...)`（如果有，这是 bin 名）
+- 文件名 `pisquad`（根 bootstrap 文件）
+
+### 验证（通过才 commit）
+- `npx tsc --noEmit` + `npm run build` exit 0
+- `grep -rn "pisquad@latest" --include="*.ts" --include="*.md" --include="*.json" --include="pisquad" .` → 所有命中都应是 `@nicklin/pisquad@latest`（无裸 `pisquad@latest`）
+- `grep -rn "npm i -g pisquad\b\|npm install -g pisquad\b" .` → 无命中（都改成 @nicklin/pisquad 了）；用 `grep -rn "npm i -g @nicklin/pisquad" .` 确认新引用在
+- `node -p "require('./package.json').name"` → `@nicklin/pisquad`
+- `node -p "JSON.stringify(require('./package.json').bin)"` → `{"pisquad":"dist/bin.js"}`（bin 名仍是 pisquad）
+- `npm pack --dry-run` → 包名显示 `nicklin/pisquad-0.1.0.tgz`（scoped 包 tarball 名用 `/`）
+- `npm publish --dry-run` → 确认能解析、access=public、不真发
+
+### commit
+`chore: rename npm package to @nicklin/pisquad (scoped)`
+
+### 报告
+- 改了哪些文件（清单）
+- grep 验证结果（裸 pisquad@latest 应为 0 命中；bin 名 pisquad 应保留）
+- npm pack --dry-run 的包名/tarball 名
+- 任何自行决策或遗留
