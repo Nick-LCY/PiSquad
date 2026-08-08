@@ -38,7 +38,9 @@ export async function installEntire(target: string, opts: PluginOptions): Promis
   }
 
   // Step 1: copy the extension directory (the bug fix).
-  copyDir(source, destination);
+  copyDir(source, destination, {
+    onSkip: (rel: string, reason: string) => logger.warn(`Skipped ${rel} (${reason})`),
+  });
   logger.info(`copied extensions/entire → ${destination}`);
 
   // Step 2: register with entire (best-effort — entire may not be installed yet).

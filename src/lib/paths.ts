@@ -22,10 +22,36 @@ export function resolveAsset(rel: string): string {
   return join(resolvePackageRoot(), "assets", rel);
 }
 
-/** Resolve an install target, expanding the conventional ~/ prefix. */
+/**
+ * Resolve an install target, expanding the conventional ~/ prefix. The result
+ * is always absolute.
+ *
+ * Notes:
+ * - Installing to an arbitrary absolute path (including `..`-relative ones
+ *   that resolve outside cwd) is intentionally allowed; users routinely ask
+ *   pisquad to install into a sibling directory (e.g. `pisquad install ../foo`).
+ * - Inputs that look like a typo for `~` but aren't (e.g. `~bob/proj`,
+ *   `~user/...`) are NOT shell-expanded — they would silently land in
+ *   `./cwd/~bob/proj` instead of bob's home. We log a heads-up so the user can
+ *   notice the path is unexpected.
+ * - Callers (notably `installCommand`) print the resolved absolute path so
+ *   the user always sees the real install destination.
+ */
 export function resolveTarget(input?: string, cwd = process.cwd()): string {
   const value = input ?? cwd;
-  const expanded = value === "~" ? homedir() : value.startsWith("~/") ? join(homedir(), value.slice(2)) : value;
+  let expanded: string;
+  if (value === "~") {
+    expanded = homedir();
+  } else if (value.startsWith("~/")) {
+    expanded = join(homedir(), value.slice(2));
+  } else if (value.startsWith("~")) {
+    // Looks like a tilde-prefix that we do NOT expand (e.g. "~user/proj").
+    // Avoid silent relative-path resolution — warn so the user can react.
+    console.warn(`pisquad: target "${value}" starts with "~" but is not "~" or "~/" — leaving it for the shell to expand. Did you mean "~/${value.slice(1)}"?`);
+    expanded = value;
+  } else {
+    expanded = value;
+  }
   return resolve(cwd, expanded);
 }
 

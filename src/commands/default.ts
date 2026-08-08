@@ -7,7 +7,7 @@ import { logger } from "../lib/logger.js";
  * with no arguments behaves like `pisquad install`.
  */
 export async function defaultCommand(): Promise<void> {
-  logger.step("default command → install");
+  logger.info("default command → install");
   const { installCommand } = await import("./install.js");
   await installCommand({});
 }

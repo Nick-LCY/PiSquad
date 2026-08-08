@@ -1,9 +1,15 @@
-import { copyFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface CopyOptions {
   filter?: (source: string, relativePath: string) => boolean;
   dryRun?: boolean;
+  /**
+   * Called once per entry that is intentionally skipped. Callers can use
+   * this to surface warnings (e.g. symlinks in the asset tree, which we
+   * deliberately do not follow during a recursive copy).
+   */
+  onSkip?: (relativePath: string, reason: string) => void;
 }
 
 /** Recursively copy a directory, optionally filtering entries or running as a preview. */
@@ -14,8 +20,18 @@ export function copyDir(src: string, dest: string, options: CopyOptions = {}): v
       const entryRelativePath = relativeDir ? join(relativeDir, entry) : entry;
       if (options.filter && !options.filter(source, entryRelativePath)) continue;
 
+      const stat = lstatSync(source);
+      // Symlinks are skipped (not followed, not copied). Following them could
+      // escape the source tree or copy a target that the caller never meant
+      // to ship; the asset tree has no symlinks today, but stage-2 diff/
+      // backup work will traverse user trees where symlinks are real.
+      if (stat.isSymbolicLink()) {
+        options.onSkip?.(entryRelativePath, "symlink");
+        continue;
+      }
+
       const destination = join(destinationDir, entry);
-      if (statSync(source).isDirectory()) {
+      if (stat.isDirectory()) {
         if (!options.dryRun) mkdirSync(destination, { recursive: true });
         copy(source, destination, entryRelativePath);
       } else {

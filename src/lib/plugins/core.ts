@@ -51,13 +51,14 @@ export async function installCore(target: string, opts: PluginOptions): Promise<
   // library template — see docs/conventions/.
   const docsSource = resolveAsset("docs");
   const docsDestination = join(target, "docs");
+  const onSkip = (rel: string, reason: string): void => logger.warn(`Skipped ${rel} (${reason})`);
   if (!existsSync(docsSource)) {
     logger.warn(`Skipping missing asset directory: ${docsSource}`);
   } else if (opts.dryRun) {
     copyDir(docsSource, docsDestination, { dryRun: true });
     logger.info(`[dry-run] copy docs → docs`);
   } else {
-    copyDir(docsSource, docsDestination);
+    copyDir(docsSource, docsDestination, { onSkip });
     logger.info(`copied docs → docs`);
   }
 
@@ -72,10 +73,15 @@ export async function installCore(target: string, opts: PluginOptions): Promise<
       }
       continue;
     }
-    const options = {
+    const options: {
+      filter: (_abs: string, rel: string) => boolean;
+      dryRun?: boolean;
+      onSkip?: (rel: string, reason: string) => void;
+    } = {
       filter: (_abs: string, rel: string) => rel !== "node_modules" && rel !== "package-lock.json",
-      ...(opts.dryRun ? { dryRun: true } : {}),
+      onSkip: (rel: string, reason: string) => logger.warn(`Skipped ${rel} (${reason})`),
     };
+    if (opts.dryRun) options.dryRun = true;
     copyDir(source, destination, options);
     logger.info(`copied ${sub} → .pi/${sub}`);
   }

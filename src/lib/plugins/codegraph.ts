@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 
 const NPM_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const INIT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const EXEC_MAX_BUFFER = 64 * 1024 * 1024; // 64MB — large codegraphs can exceed 4MB default
 
 /**
  * Install the codegraph extension into the target.
@@ -24,6 +25,7 @@ export async function installCodegraph(target: string, opts: PluginOptions): Pro
   const logger = opts.logger;
   const source = resolveAsset(".pi/extensions/codegraph");
   const destination = join(target, ".pi", "extensions", "codegraph");
+  const onSkip = (rel: string, reason: string): void => logger.warn(`Skipped ${rel} (${reason})`);
 
   if (!existsSync(source)) {
     logger.warn(`Missing codegraph asset directory: ${source}`);
@@ -35,6 +37,7 @@ export async function installCodegraph(target: string, opts: PluginOptions): Pro
     copyDir(source, destination, {
       dryRun: true,
       filter: (_abs, rel) => rel !== "node_modules" && rel !== "package-lock.json",
+      onSkip,
     });
     logger.info(`[dry-run] npm install (skipped)`);
     logger.info(`[dry-run] codegraph init (skipped)`);
@@ -43,6 +46,7 @@ export async function installCodegraph(target: string, opts: PluginOptions): Pro
 
   copyDir(source, destination, {
     filter: (_abs, rel) => rel !== "node_modules" && rel !== "package-lock.json",
+    onSkip,
   });
   logger.info(`copied extensions/codegraph`);
 
@@ -71,7 +75,7 @@ export async function installCodegraph(target: string, opts: PluginOptions): Pro
     await execFileAsync("npm", ["install", "--no-audit", "--no-fund", "--loglevel=warn"], {
       cwd: destination,
       timeout: NPM_TIMEOUT_MS,
-      maxBuffer: 4 * 1024 * 1024,
+      maxBuffer: EXEC_MAX_BUFFER,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -85,7 +89,7 @@ export async function installCodegraph(target: string, opts: PluginOptions): Pro
       await execFileAsync("codegraph", ["init"], {
         cwd: target,
         timeout: INIT_TIMEOUT_MS,
-        maxBuffer: 4 * 1024 * 1024,
+        maxBuffer: EXEC_MAX_BUFFER,
       });
     } catch (error) {
       logger.warn(`codegraph init failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
