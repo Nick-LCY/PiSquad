@@ -24,4 +24,4 @@
 ```
 
 ## 清单
-- （暂无）
+- [[prds/pisquad-cli.md]] — 把 `pisquad` 从 bash 安装器升级为 npm 全局 CLI（含 upgrade 安全机制、docs diff 备份、entire bug 修复）

@@ -3,7 +3,7 @@
 编码、提交、命名等规范（稳定层）。
 
 ## 内容
-- （待补充，如 `coding-style.md`、`commit-message.md`）
+- [[conventions/install-state.md]] — `<target>/.pi/.pisquad/` 运行时产物约定（`state.json` schema、`backups/` 命名规则与保留策略、与 git 协作）
 
 ## 文档链接约定
 

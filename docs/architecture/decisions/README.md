@@ -15,4 +15,4 @@
 ```
 
 ## 清单
-- （暂无）
+- [[architecture/decisions/0001-pisquad-cli.md]] — pisquad 升级为 npm 全局 CLI（语言/包名/分发/仓库结构/技术栈/upgrade 安全机制/docs diff/不向后兼容）
