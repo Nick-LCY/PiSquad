@@ -13,7 +13,7 @@ status: todo
 ## 完成标准
 
 - [ ] Quick Start 段：
-  - **主推**：`npm i -g pisquad` + `pisquad install .`
+  - **主推**：`npm i -g @nicklin/pisquad` + `pisquad install .`
   - **兼容**：`curl -fsSL ... | bash` 一行仍可工作（链接指向 release tarball 或 git raw）
 - [ ] Commands 段列出：
   - `pisquad`（默认 install）

@@ -23,4 +23,4 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 1
 fi
 
-exec npx --yes pisquad@latest "$@"
+exec npx --yes @nicklin/pisquad@latest "$@"

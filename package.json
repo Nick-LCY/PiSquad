@@ -1,5 +1,5 @@
 {
-  "name": "pisquad",
+  "name": "@nicklin/pisquad",
   "version": "0.1.0",
   "description": "Install and upgrade the pi-squad development foundation",
   "type": "module",
@@ -13,6 +13,9 @@
     "LICENSE",
     "pisquad"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },

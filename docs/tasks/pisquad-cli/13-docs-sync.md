@@ -13,7 +13,7 @@ status: todo
 ## 完成标准
 
 - [ ] `docs/architecture/overview.md`：
-  - 「概述」段关于安装器的描述从「`pisquad` 安装器（推荐）：支持 `curl | bash` 一键安装」改为「`pisquad` CLI（推荐）：`npm i -g pisquad`；也兼容 `curl | bash`」
+  - 「概述」段关于安装器的描述从「`pisquad` 安装器（推荐）：支持 `curl | bash` 一键安装」改为「`pisquad` CLI（推荐）：`npm i -g @nicklin/pisquad`；也兼容 `curl | bash`」
   - 关键决策段补一条：pisquad 已从 bash 安装器升级为 npm CLI（指向 [[architecture/decisions/0001-pisquad-cli.md]]）
 - [ ] `README.md`：
   - 增补 Upgrade safety 段：解释 backup 机制、`state.json` 用途、误改 docs 的恢复方式（手工 `tar xzf`）

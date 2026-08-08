@@ -10,7 +10,7 @@ pi-squad 是一套基于 pi coding agent 的可复用多 Agent、文档驱动开
 
 两种使用方式：
 
-- **`pisquad` CLI**（推荐）：`npm i -g pisquad`；也兼容 `curl | bash` 一键安装
+- **`pisquad` CLI**（推荐）：`npm i -g @nicklin/pisquad`；也兼容 `curl | bash` 一键安装
 - **手动复制**：把 `assets/.pi/` 与 `assets/docs/` 拷贝进现有项目，立刻获得编排与文档约束能力
 
 ## 架构

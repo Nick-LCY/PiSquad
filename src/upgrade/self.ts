@@ -12,10 +12,10 @@ import type { Logger } from "../lib/plugins/types.js";
  *     skip the entire stage and report `updated: false`.
  *   - Only attempt an update when the `pisquad` binary on PATH resolves to a
  *     file under npm's global prefix (i.e. was installed via `npm i -g`). When
- *     the binary is missing, or is a non-global install (e.g. `npx pisquad`
+ *     the binary is missing, or is a non-global install (e.g. `npx @nicklin/pisquad@latest`
  *     sandbox or local dev tree), print "CLI not from global npm, skipping
  *     self-update" and return.
- *   - On a successful `npm install -g pisquad@latest`, return `updated: true`
+ *   - On a successful `npm install -g @nicklin/pisquad@latest`, return `updated: true`
  *     so the upgrade command can prompt the user to re-run.
  *   - On failure, throw — the upgrade command aborts without touching the
  *     target project.
@@ -49,10 +49,10 @@ export interface SelfUpdateResult {
 }
 
 const NPM_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes — global installs are usually fast
-const NPM_GLOBAL_ARGS = ["install", "-g", "pisquad@latest", "--no-audit", "--no-fund"];
+const NPM_GLOBAL_ARGS = ["install", "-g", "@nicklin/pisquad@latest", "--no-audit", "--no-fund"];
 
 /**
- * Spawn `npm install -g pisquad@latest` with a hard timeout.
+ * Spawn `npm install -g @nicklin/pisquad@latest` with a hard timeout.
  *
  * `execCapture` in env.ts does not enforce a timeout, and a stuck global
  * install would otherwise block the whole upgrade command. We use a dedicated
@@ -77,7 +77,7 @@ function runNpmInstallGlobal(): Promise<ExecCaptureResult> {
       if (settled) return;
       settled = true;
       child.kill("SIGTERM");
-      reject(new Error(`npm install -g pisquad@latest timed out after ${NPM_TIMEOUT_MS / 1000}s`));
+      reject(new Error(`npm install -g @nicklin/pisquad@latest timed out after ${NPM_TIMEOUT_MS / 1000}s`));
     }, NPM_TIMEOUT_MS);
 
     child.stdout?.setEncoding("utf8");
@@ -182,7 +182,7 @@ export async function selfUpdate(opts: SelfUpdateOptions = {}): Promise<SelfUpda
     const combined = (result.stderr || result.stdout || "").trim();
     const snippet = combined.length > 800 ? `${combined.slice(0, 800)}…` : combined;
     throw new Error(
-      `npm install -g pisquad@latest exited ${result.exitCode}${snippet ? `\n${snippet}` : ""}`,
+      `npm install -g @nicklin/pisquad@latest exited ${result.exitCode}${snippet ? `\n${snippet}` : ""}`,
     );
   }
 

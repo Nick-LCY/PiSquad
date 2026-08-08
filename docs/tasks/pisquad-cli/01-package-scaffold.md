@@ -13,7 +13,7 @@ status: todo
 ## 完成标准
 
 - [ ] `package.json` 含：
-  - `name: "pisquad"`
+  - `name: "@nicklin/pisquad"`
   - `version: "0.1.0"`（占位，后续发布时 bump）
   - `bin: { "pisquad": "dist/bin.js" }`
   - `files: ["dist", "assets", "README*.md", "LICENSE", "pisquad"]`

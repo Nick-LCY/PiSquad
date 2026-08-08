@@ -43,7 +43,7 @@ pi-squad 已基本成型、可用：多 Agent 协作、文档驱动、会话可�
 | `tasks/pisquad-cli/09-diff-and-backup.md` | done | diff / backup lib（**docs 纳入 diff**） |
 | `tasks/pisquad-cli/10-state-read-compare.md` | done | state 读取与比较（**不向后兼容**） |
 | `tasks/pisquad-cli/11-upgrade-command.md` | done | upgrade 命令完整逻辑（安全机制） |
-| `tasks/pisquad-cli/12-cli-self-update.md` | done | CLI 自更新（`npm i -g pisquad@latest`） |
+| `tasks/pisquad-cli/12-cli-self-update.md` | done | CLI 自更新（`npm i -g @nicklin/pisquad@latest`） |
 
 **阶段 3 · 文档与发布**
 
@@ -58,7 +58,7 @@ pi-squad 已基本成型、可用：多 Agent 协作、文档驱动、会话可�
 
 ## 最近变更
 
-- pisquad CLI 化完成：14 个 task 全部 done，`npm i -g pisquad` 主路径 + `curl | bash` 兼容入口，`pisquad upgrade` 配 docs 备份恢复
+- pisquad CLI 化完成：14 个 task 全部 done，`npm i -g @nicklin/pisquad` 主路径 + `curl | bash` 兼容入口，`pisquad upgrade` 配 docs 备份恢复
 - 文档全面同步：`docs/architecture/overview.md` 反映 CLI 化；`assets/docs/` 镜像关键文档（overview / decisions/0001 / conventions/install-state），消费者模板视角与仓库内开发进度解耦
 - 全面 e2e 验证通过：self-install / install --all / upgrade 备份 docs/README.md / 无 tty exit 0 / `npm pack --dry-run` 内容清单符合预期
 - `current-state.md` 改为通用模板，移除本仓库进度记录

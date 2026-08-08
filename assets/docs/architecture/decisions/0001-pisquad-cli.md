@@ -25,8 +25,8 @@
 ## 决策
 
 1. **语言选 TypeScript**：现有 `.pi/extensions/` 已是 TS，统一到 TS 减少工具链分裂；可读性、生态成熟度都合适
-2. **包名定为 `pisquad`**：已核实 npm registry 未占用
-3. **分发型式**：以 **npm 全局包**（`npm i -g pisquad`）为主入口；保留一个**极简 bash bootstrap**（仓库根 `pisquad` 文件）维持 `curl | bash` 入口——它只做两件事：检测 node，然后转发到 `pisquad`（已全局）或 `npx pisquad@latest`
+2. **包名定为 `@nicklin/pisquad`**（scoped npm 包）：原计划使用 unscoped `pisquad`，但 `npm publish` 触发 npm 包名相似性规则（与已存在的 `pi-squad` 太相似）被拒，故改用 scoped 包 `@nicklin/pisquad`，并加 `publishConfig.access = "public"` 让发布默认公开。**bin 命令名保持 `pisquad`**——命令名与 npm 包名解耦，用户安装后仍敲 `pisquad install`。
+3. **分发型式**：以 **npm 全局包**（`npm i -g @nicklin/pisquad`）为主入口；保留一个**极简 bash bootstrap**（仓库根 `pisquad` 文件）维持 `curl | bash` 入口——它只做两件事：检测 node，然后转发到 `pisquad`（已全局）或 `npx @nicklin/pisquad@latest`
 4. **仓库结构**：**根目录即 npm 包根**——`src/` `dist/` `package.json` `tsconfig.json` `tsup.config.ts` `.npmignore` 都在根；`assets/` 保持原位（在根）
 5. **assets 内嵌**：`assets/` 打包进 npm 包本体，install / upgrade 都从**包内资源**拷贝，**不再运行时 curl GitHub tarball**；CLI 版本 = assets 版本
 6. **技术栈**：`commander`（命令分发）+ `@inquirer/prompts`（交互 checkbox / select）+ `picocolors`（彩色）+ `tsup`（打包）；Node ≥ 18
@@ -57,7 +57,7 @@
 ### 用户层面
 
 - **旧项目（用 bash 安装器装过的）无 state.json**：必须重新 `pisquad install`（非目标第 1 条，明确不写迁移工具）
-- 新项目走 `npm i -g pisquad` 或 `curl | bash` 均可
+- 新项目走 `npm i -g @nicklin/pisquad` 或 `curl | bash` 均可
 
 ### 运行时产物约定
 

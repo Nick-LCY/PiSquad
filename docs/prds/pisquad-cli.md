@@ -34,9 +34,9 @@ pi-squad 的可执行文件 `pisquad` 目前是仓库根一个 152 行的单文�
 
 ### 1. 分发链路
 
-**主路径**：`npm i -g pisquad` 后直接调用 `pisquad`（或 `npx pisquad@latest` 一次性使用）。
+**主路径**：`npm i -g @nicklin/pisquad` 后直接调用 `pisquad`（或 `npx @nicklin/pisquad@latest` 一次性使用）。
 
-**兼容入口**：仓库根保留一个极简 bash 脚本 `pisquad`，检测到 node 后转发到 `pisquad`（已全局安装）或 `npx pisquad@latest`。这样 `curl ... | bash` 形式仍可用，且后续不再用 curl 拉 tarball。
+**兼容入口**：仓库根保留一个极简 bash 脚本 `pisquad`，检测到 node 后转发到 `pisquad`（已全局安装）或 `npx @nicklin/pisquad@latest`。这样 `curl ... | bash` 形式仍可用，且后续不再用 curl 拉 tarball。
 
 ### 2. 仓库结构
 
@@ -98,20 +98,20 @@ pisquad help
 
 任务文件落在 `tasks/pisquad-cli/` 下，共 14 个，分三阶段：
 
-- **阶段 1（MVP）**：01–08，能 `npm i -g pisquad` 并 install 成功
+- **阶段 1（MVP）**：01–08，能 `npm i -g @nicklin/pisquad` 并 install 成功
 - **阶段 2（upgrade 全套）**：09–12，diff/backup/self-update
 - **阶段 3（文档与发布）**：13–14，docs 全面同步 + e2e 验证 + npm publish 演练
 
 ## 验收标准
 
-- [ ] `npm i -g pisquad` 后 `pisquad --version` / `pisquad --help` 正常输出
+- [ ] `npm i -g @nicklin/pisquad` 后 `pisquad --version` / `pisquad --help` 正常输出
 - [ ] `pisquad install` 交互式能用方向键勾选 codegraph / entire，core 全装
 - [ ] `pisquad install --yes --with codegraph,entire <dir>` 在无 tty 子进程中退出码 0、**不卡死**
 - [ ] entire 勾选后，目标 `.pi/extensions/entire/index.ts` 实际存在（bug 已修复）
 - [ ] `pisquad upgrade` 在已安装项目：检测到本地修改 → 生成 tar.gz 备份 → 覆盖 → 打印提示；state.json 前进
 - [ ] **`docs/` 的修改也被 diff + 备份保护**（修改 `<dir>/docs/README.md` 后 upgrade 触发备份）
 - [ ] `npm pack --dry-run` 确认包内含 `dist/` `assets/` `README*.md` `LICENSE` `pisquad`，**不含** `src/` `node_modules/` `.pi/` `docs/`
-- [ ] `curl | bash` bootstrap 在 node 就绪时正确转发到全局 `pisquad` 或 `npx pisquad@latest`
+- [ ] `curl | bash` bootstrap 在 node 就绪时正确转发到全局 `pisquad` 或 `npx @nicklin/pisquad@latest`
 - [ ] 旧项目（无 state.json）执行 `pisquad upgrade` 报清晰错误并退出非零码，**不写迁移工具**
 
 相关文档：[[architecture/overview.md]]，架构决策 [[architecture/decisions/0001-pisquad-cli.md]]，约定 [[conventions/install-state.md]]，任务列表 `tasks/pisquad-cli/`，看板 [[current-state.md]]。

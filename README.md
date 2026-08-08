@@ -39,7 +39,7 @@ For whom:
 The recommended path uses the npm-distributed CLI:
 
 ```bash
-npm i -g pisquad
+npm i -g @nicklin/pisquad
 pisquad install .            # install into the current directory
 ```
 
@@ -48,7 +48,7 @@ If Node.js ≥ 18 is already on the box but `npm i -g` is not an option, the bas
 ```bash
 curl -fsSL https://raw.githubusercontent.com/earendil-works/pisquad/main/pisquad | bash
 # bootstrap detects node and forwards to `pisquad` (if globally installed)
-# or `npx pisquad@latest`
+# or `npx @nicklin/pisquad@latest`
 ```
 
 The interactive flow then walks you through picking the optional channels (codegraph / entire). For CI / pipelines, skip the prompts with `--yes` (core only) or pin a selection explicitly:
@@ -181,7 +181,7 @@ docs/
 │   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
 │   ├── docs/            # document library (template skeleton, see section above)
 │   └── codegraph.json   # codegraph config
-├── pisquad              # bash bootstrap (forwards to global `pisquad` or `npx pisquad@latest`)
+├── pisquad              # bash bootstrap (forwards to global `pisquad` or `npx @nicklin/pisquad@latest`)
 ├── src/                 # TypeScript source for the CLI (`bin.ts`, `main.ts`, `commands/`, `lib/`)
 ├── dist/                # built CLI output (gitignored; bundled into the npm tarball)
 ├── package.json         # npm package metadata + dependency manifest
