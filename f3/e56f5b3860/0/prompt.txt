@@ -1,0 +1,168 @@
+先审查。
+
+---
+
+Task: ## 审查任务：pisquad CLI MVP（阶段 1）
+
+审查 pisquad CLI 化第一阶段（MVP）的全部代码。这是把 pisquad 从 bash 安装器重写为 npm 全局 CLI 的第一批可交付成果，核心是 `pisquad install` 全链路。
+
+### 上下文（先读）
+- `docs/prds/pisquad-cli.md` — 设计、14 项决策、9 条验收标准
+- `docs/architecture/decisions/0001-pisquad-cli.md` — 决策依据
+- `docs/conventions/install-state.md` — state.json schema（验收依据）
+- `docs/tasks/pisquad-cli/01–08` — 各 task 的完成标准
+
+### 审查范围
+本次 MVP 全部新增代码，11 个 commit（`fa3ef96`→`dbf0377`）。用 `git log --oneline 6fdadf0..HEAD` 和 `git diff 6fdadf0..HEAD -- src/ pisquad package.json tsconfig.json tsup.config.ts .npmignore` 看全貌。重点文件：
+- `src/bin.ts`、`src/main.ts`
+- `src/commands/{install,version,help,default}.ts`
+- `src/lib/{env,paths,logger,ui,assets,copy,fs-safe,version}.ts`
+- `src/lib/plugins/{core,codegraph,entire,index,types}.ts`
+- `pisquad`（bash bootstrap）
+
+### 已知背景（不必重复发现，但可确认修复是否正确）
+编排者已验收并修复 2 个 bug：
+1. `--without` 语义（基准应为 all）+ with/without 冲突检测 — commit `30fb4da`
+2. core 通道过度拷贝 codegraph/entire 扩展 — commit `dbf0377`
+
+### 审查重点（按优先级）
+
+**1. 安全**
+- 命令执行：`entire enable` / `codegraph init` / `npm install` 用 execFile 还是 exec？参数是否有用户输入拼接（命令注入风险）？
+- 路径处理：`resolveTarget` 接受用户提供的路径——路径遍历、符号链接跟随、绝对/相对路径、`..` 越界？
+- 临时文件/目录的创建与清理
+
+**2. 正确性与边界条件**
+- `copyDir` 递归拷贝：符号链接处理、权限保留、空目录、目标已存在时的覆盖语义
+- `atomicWriteFile` 的原子性（rename 是否跨目录/跨设备？失败回退？）
+- `state.json` 读写：JSON.parse 异常处理、损坏文件、并发
+- `decideChannels` 边界：空字符串、未知 channel、大小写、重复值
+- install 的退出语义：`process.exitCode` vs `process.exit`、异步 rejection 是否被吞（unhandledRejection）
+- 子进程：超时、stdout/stderr 处理、僵尸进程、文件句柄/资源泄漏
+
+**3. 错误处理与一致性**
+- cp / npm install / codegraph init / entire enable / state 写入 各自失败时：致命 vs 警告的判定是否合理？部分安装失败后目标目录是否处于不一致状态（有无回滚或残留）？
+
+**4. 设计一致性（对照 PRD/ADR）**
+- core 始终全装、codegraph/entire 可选
+- 已装项目（有 state.json）拒绝覆盖式安装、提示走 upgrade
+- 无 tty 自动退化 core-only、退出码 0
+- state.json schema 对齐 conventions
+
+**5. 复用性（为第二阶段 upgrade 铺垫，重点）**
+第二阶段会复用 `paths`/`version`/`copy`/`fs-safe`/`plugins`，并新增 `diff`/`backup`/`readState`/`compareVersions`。请评估：当前 lib 的接口是否便于复用？有无应该抽出但内联在 install/plugins 里的逻辑（例如拷贝、路径解析、状态读写）？有无硬编码假设会阻碍 upgrade 的 diff/backup？
+
+### 输出
+按标准格式：**Files Reviewed / Critical (must fix) / Warnings (should fix) / Suggestions (consider) / Summary**。每个问题指明 `文件:行号`，给出具体修复方向。严格只读——不要改任何文件、不要跑 build。
+
+---
+
+可以
+
+---
+
+Task: ## 任务：修复 reviewer 发现的 MVP 问题（C1–C4 + W1/W2/W4/W8/W10）
+
+pisquad CLI MVP 经过 code review，发现若干问题。按 4 个主题分别修复、各自 commit。**先读相关文件确认现状，再动手。**
+
+涉及文件（先通读）：`src/commands/install.ts`、`src/lib/version.ts`、`src/lib/assets.ts`、`src/lib/plugins/core.ts`、`src/lib/plugins/codegraph.ts`、`src/lib/copy.ts`、`src/lib/paths.ts`、`src/commands/default.ts`、`.npmignore`。背景文档：`docs/prds/pisquad-cli.md`、`docs/conventions/install-state.md`。
+
+---
+
+### Commit 1 — `fix(cli): copy docs payload in core channel`（C1，最关键）
+
+**Bug**：`installCore` 从不拷贝 `assets/docs/` 到 `<target>/docs/`。pi-squad 的 Docs 层（文档库模板）是核心 payload，旧 bash 明确 `cp -r assets/docs`，PRD/README 都承诺会拷，当前完全遗漏。
+
+**先验证 bug 存在**：`npm run build` 后 `node dist/bin.js install /tmp/c1verify --yes`，确认 `/tmp/c1verify/docs/` **不存在**。清理后修。
+
+**修复**：在 `src/lib/plugins/core.ts` 的 `installCore` 里，增加拷贝 `docs` 的步骤——`copyDir(resolveAsset("docs"), join(target, "docs"))`（与 agents/skills 同样的 dry-run/error 处理）。core 始终装 docs（docs 属于 core channel，不可选）。
+
+**验证（通过才 commit）**：
+- `npx tsc --noEmit` + `npm run build` exit 0
+- `node dist/bin.js install /tmp/c1 --yes` → `/tmp/c1/docs/` 存在，含 `README.md`、`current-state.md`、`architecture/` 等
+- 清理临时目录
+
+---
+
+### Commit 2 — `fix(cli): add assets-version and unify state reading`（C2 + C3）
+
+**C2**：`assets/.pi/assets-version.txt` 不存在；`version.ts` 的 `resolveAssetsVersion()` 吞掉读取错误、fallback 到 cliVersion，导致每个 `state.json` 的 `version === cliVersion`，破坏 PRD 的双版本分离（cliVersion=工具版本，version=assets 内容版本）。且与 `assets.ts#readAssetsVersion()`（缺失抛错）行为矛盾。
+
+**修复**：
+1. **创建 `assets/.pi/assets-version.txt`**，内容为 `0.1.0`（= 当前 package.json version；后续可独立 bump）。**本次修复授权创建这一个 assets/ 文件**（它是 install 的版本依赖，非 payload 内容变更；其余 assets/ 内容仍不动）。
+2. `writeState` 路径：`version` 字段改用 `readAssetsVersion()`（读文件，缺失则**抛错**暴露问题），**不再**走 `resolveAssetsVersion` 的 fallback。即 `version = partial.version ?? existing?.version ?? readAssetsVersion()`。
+3. `versionCommand`（`src/commands/version.ts`）可保留带 fallback 的展示（容错），即展示时缺失文件退回 cliVersion。
+4. 这样区分清楚：写入 state 必须真实读 assets 版本（严格）；展示可容错。
+
+**C3**：`install.ts` 有本地 `readExistingState`（无字段校验，`JSON.parse as InstallState`），`version.ts` 另有一个更严格的。两者对"损坏 state.json"判断不一致（一个当已装、一个当未装）。
+
+**修复**：
+1. 在 `version.ts` 导出统一的 `readState(target): InstallState | undefined`（严格校验 version+cliVersion+installedAt+channels 字段；缺失或损坏返回 undefined，或对损坏文件给清晰错误——选择"返回 undefined 并由调用方决定"即可，保持简单）。
+2. 删除 `install.ts` 里的本地 `readExistingState`，改用导入的 `readState`。
+3. `writeState` 内部合并 existing state 时也用 `readState`（统一入口）。这也为第二阶段 task 10（readState）铺垫。
+
+**验证（通过才 commit）**：
+- tsc + build exit 0
+- `node dist/bin.js install /tmp/c2 --yes` → state.json 的 `version` 字段 = `"0.1.0"`（来自 assets-version.txt），`cliVersion` 也是 `0.1.0`（值相同但来源不同，语义分离已建立）
+- `grep -n "readExistingState" src/` → 仅在 version.ts 内部（或无，若已重命名）；install.ts 不再有本地定义
+- 手动写一个损坏的 `/tmp/c2corrupt/.pi/.pisquad/state.json`（内容 `{"foo":"bar"}`），跑 install → 行为一致（按 readState 返回 undefined 处理，即当未装，而非一个路径当已装），清理
+
+---
+
+### Commit 3 — `fix(cli): atomic gitignore write and codegraph.json copy`（C4 + W1）
+
+**C4**：`install.ts` 的 `appendGitignoreRule` 用 `writeFileSync`（非原子），其余写入都用 `atomicWriteFile`。断电可能损坏用户 `.gitignore`。
+
+**修复**：改用 `atomicWriteFile`——先读现有内容、计算新内容（含追加的 `.pi/.pisquad/`），再原子写入。
+
+**W1a**：codegraph channel 从不拷 `assets/codegraph.json` 到 `<target>/codegraph.json`（旧 bash 拷了，是 `codegraph init` 的配置输入）→ 回归。
+
+**修复**：在 `installCodegraph`（`src/lib/plugins/codegraph.ts`）里，cp `assets/codegraph.json` → `<target>/codegraph.json`。**首次安装路径下目标文件应不存在；若已存在则跳过（不覆盖用户配置）**，并 log。
+
+**W1b**：`.npmignore` 的 `codegraph.json` 未锚定（minimatch 可能误匹配深层）。改为 `/codegraph.json`（锚定根）。
+
+**验证（通过才 commit）**：
+- tsc + build exit 0
+- `node dist/bin.js install /tmp/c3 --yes --with codegraph` → `/tmp/c3/codegraph.json` 存在；确认 install.ts 的 gitignore 写入用 atomicWriteFile（代码确认）
+- 清理
+
+---
+
+### Commit 4 — `fix(cli): harden copy/target/codegraph robustness`（W2 + W4 + W8 + W10）
+
+**W2**：`copy.ts` 的 `copyDir` 用 `statSync`（跟随符号链接）。assets 树当前无符号链接，但第二阶段 diffTree 会遍历用户 target 树，符号链接是真实风险。
+
+**修复**：改用 `lstatSync`；遇到符号链接时**跳过**（不跟随、不拷贝），用 logger 记一条 warn。保持简单、安全。
+
+**W4**：`resolveTarget` 无校验。注意：install 到任意路径是**合法需求**（用户指定目标，如 `pisquad install ../sibling`），**不要硬拒绝 `..`**。但：
+- `~user`（非 `~/`）会静默误展开成相对路径（`cwd/~user/...`）→ 这种情况 log 一条 warn 提示路径异常。
+- 确认 `resolveTarget` 返回的是绝对路径，且 install 入口已打印该绝对路径（`logger.info("pisquad install → ${target}")`）——如已有则保持，让用户始终能看到真实目标。
+
+**W8**：`codegraph.ts` 的 `codegraph init` 用 `maxBuffer: 4MB`，大仓库可能溢出导致误导性 warn。
+
+**修复**：把 `codegraph init` 的 maxBuffer 提高到 `64 * 1024 * 1024`（64MB）。（npm install 的 maxBuffer 也一并检查，若也是 4MB 则同步提高。）
+
+**W10**：`default.ts` 用 `logger.step(...)`，但 `step` 只在 verbose 开启时输出，而 MVP 无任何路径 `setVerbose(true)` → 永久静默。
+
+**修复**：改用 `logger.info(...)`（或直接删除该行，因为 commander 已显示分发）。倾向改 info，保留可观测性。
+
+**验证（通过才 commit）**：
+- tsc + build exit 0
+- 代码确认：copy.ts 用 lstatSync 且跳过符号链接；codegraph.ts maxBuffer=64MB；default.ts 用 logger.info
+- `node dist/bin.js`（无参）→ 不再静默（能看到 default→install 的 info，或行为正常）
+- 清理临时目录
+
+---
+
+## 总体要求
+
+- **4 个 commit，按上面顺序**，每个 commit 前验证通过再提交，不要合并。
+- conventional commits、英文。
+- 遇到与本任务描述冲突或未覆盖的细节，按 PRD/conventions 自行合理决策，并在报告说明。
+- 不要改 `docs/`（文档同步留给 task 13）；不要改 assets/ 除 `assets/.pi/assets-version.txt` 外的任何内容。
+
+## 完成后报告
+
+- 每个 commit 的 hash、改了哪些文件、对应修复了哪个 issue（C1/C2/...）
+- 每个 commit 的验证结果（实际输出）
+- 自行决策点、遗留问题
