@@ -2,7 +2,7 @@ import { copyDir } from "../copy.js";
 import { resolveAsset } from "../paths.js";
 import { atomicWriteFile } from "../fs-safe.js";
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { PluginOptions } from "./types.js";
@@ -50,6 +50,19 @@ export async function installCodegraph(target: string, opts: PluginOptions): Pro
   const gitignore = join(destination, ".gitignore");
   if (!existsSync(gitignore)) {
     atomicWriteFile(gitignore, "node_modules\n");
+  }
+
+  // Ship the hand-curated codegraph.json (input to \`codegraph init\`) into the
+  // target root. Never overwrite an existing one — the user may have customised it.
+  const configSource = resolveAsset("codegraph.json");
+  const configDestination = join(target, "codegraph.json");
+  if (existsSync(configDestination)) {
+    logger.info(`codegraph.json already present at ${configDestination}, skipping`);
+  } else if (!existsSync(configSource)) {
+    logger.warn(`Missing codegraph config asset: ${configSource}`);
+  } else {
+    copyFileSync(configSource, configDestination);
+    logger.info(`copied codegraph.json → ${configDestination}`);
   }
 
   // Run npm install in the destination.

@@ -6,4 +6,4 @@ docs/
 .entire/
 tsconfig.json
 tsup.config.ts
-codegraph.json
+/codegraph.json

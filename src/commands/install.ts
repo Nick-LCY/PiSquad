@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveTarget, stateFile } from "../lib/paths.js";
 import { which } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
+import { atomicWriteFile } from "../lib/fs-safe.js";
 import { decideChannels, type Channels } from "../lib/ui.js";
 import { writeState, readState } from "../lib/version.js";
 import { installChannels } from "../lib/plugins/index.js";
@@ -49,7 +50,9 @@ function appendGitignoreRule(target: string): void {
   const existing = readFileSync(gitignore, "utf8");
   if (existing.includes(".pi/.pisquad/")) return;
   const sep = existing.endsWith("\n") ? "" : "\n";
-  writeFileSync(gitignore, `${existing}${sep}.pi/.pisquad/\n`, "utf8");
+  const next = `${existing}${sep}.pi/.pisquad/\n`;
+  // Atomic so a crash mid-write cannot truncate the user's existing .gitignore.
+  atomicWriteFile(gitignore, next);
   logger.info("appended .pi/.pisquad/ to .gitignore");
 }
 
