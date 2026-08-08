@@ -223,3 +223,65 @@ pi-squad 的可执行文件 `pisquad` 目前是一个 152 行的单文件 bash �
 - 写 PRD 引用 task 时，用行内代码描述模式（如 `tasks/pisquad-cli/`），避免对尚未稳定命名的单个 task 写死链
 - 所有 `[[...]]` 目标必须真实存在；创建顺序上先建文件再写引用它的链接
 - 严格遵守 conventions/README.md 的 wikilink 规范（表格内别名转义 `\|`）
+
+---
+
+可以，另外注意commit，做完一件事情就commit一次。
+
+---
+
+Task: ## 任务：实现 pisquad CLI 第一阶段地基（task 01–03）
+
+这是「把 pisquad 从 bash 安装器升级为 npm 全局 CLI」需求的第一批工作。本次只做 3 个 task：包脚手架、bash bootstrap、CLI lib 基础。
+
+## 先读上下文（必读，按顺序）
+
+1. `docs/prds/pisquad-cli.md` — 整体设计、决策、验收标准
+2. `docs/architecture/decisions/0001-pisquad-cli.md` — 14 项决策依据
+3. `docs/conventions/install-state.md` — state.json 约定（lib 设计参考）
+4. `docs/tasks/pisquad-cli/01-package-scaffold.md` — 本次 task 1（完整完成标准在此）
+5. `docs/tasks/pisquad-cli/02-bash-bootstrap.md` — 本次 task 2
+6. `docs/tasks/pisquad-cli/03-cli-lib-foundation.md` — 本次 task 3
+7. 现有 `pisquad`（仓库根 bash 脚本，将被改造成 bootstrap）
+8. `assets/` 目录结构（lib 的 assets/copy 模块要访问这些资源）
+
+**严格遵循各 task 文件的「完成标准」**。task 文件已经写得很细，按它执行即可。
+
+## 执行顺序：01 → 02 → 03
+
+三个 task 的依赖链：01（脚手架）→ 02（bootstrap，需 package.json 的 bin 名）→ 03（lib，需 node 环境与包结构）。
+
+关键点提醒（task 文件里也有）：
+- **01**：`package.json`（name=`pisquad`、`type: module`、`bin`、`files` 含 `dist/ assets/ README*.md LICENSE pisquad`、`engines.node >=18`、deps: `commander` `@inquirer/prompts` `picocolors`、devDeps: `typescript` `tsup` `@types/node`）；`tsconfig.json`（ES2022/NodeNext/strict）；`tsup.config.ts`（入口 `src/bin.ts` → `dist/bin.js`，带 `#!/usr/bin/env node` banner）；`.npmignore`（排除 `src/ tsconfig.json .pi/ docs/ codegraph.json` 等）；`.gitignore` **追加** `dist/`（先 read 现有内容，追加而非覆盖）。为让 01 之后能 build，可放一个最小 `src/bin.ts` 占位（如打印版本）。
+- **02**：把仓库根 `pisquad` 整体改写为 bash bootstrap：保留 shebang + `set -euo pipefail` + node 版本检测（≥18，缺失/过老则退出码 1 + 安装指引）+ 转发逻辑（`command -v pisquad` 命中则 `exec pisquad "$@"`，否则 `exec npx --yes pisquad@latest "$@"`）。
+- **03**：`src/lib/{env,paths,logger,ui,assets,copy,fs-safe}.ts`，具体见 task 文件。重点：`env.isInteractive()` 同时检查 `process.stdin.isTTY` 与 `CI`/`PISQUAD_NO_TTY`；`ui` 的非交互决策表（`--yes`/`--with`/`--without`/`--all` + 环境变量优先级）；**无 tty 自动退化为非交互默认（只装 core）**，绝不 EOF 卡死。
+
+## commit 要求（用户明确强调，务必遵守）
+
+**每完成一个 task（01 / 02 / 03）立即做一次 git commit**，不要把多个 task 混在一个 commit 里。每条 commit 只含该 task 的改动。
+
+- commit message 用 **conventional commits 风格、英文**。先 `git log --oneline -5` 参考现有历史（如 `chore: setup development env`），保持一致。
+- 建议格式：
+  - task 01 → `feat(cli): scaffold npm package and build tooling`
+  - task 02 → `feat(cli): replace bash installer with bootstrap forwarder`
+  - task 03 → `feat(cli): add CLI lib foundation (env/paths/ui/assets/copy)`
+- 每个 task 完成后**先本地验证通过再 commit**（见下方验证）。
+
+## 验证（每个 task 完成后做，通过才 commit）
+
+- **01 后**：`npm install` 成功、`npx tsc --noEmit` 无错、`npm run build`（tsup）能产出 `dist/bin.js`（占位 bin.ts 足够）
+- **02 后**：`bash pisquad --help` 或 `bash pisquad --version` 能触发转发（本地若未 `npm i -g`，会走 npx 路径或给出清晰提示，不报奇怪错误）；node 缺失分支可模拟
+- **03 后**：`npx tsc --noEmit` 无错、`npm run build` 通过；lib 各模块导出齐全且类型正确
+
+## 注意事项
+
+- 这是 dogfooding 项目，仓库根已有 `.pi/` `docs/` 等 pi-squad 工作流文件——**不要破坏它们**。`docs/` 和 `assets/` 的内容本次**不要改**（那是 archivist / 后续 task 的事），唯一例外是 task 02 要改根 `pisquad` 文件。
+- `.gitignore` 用**追加**方式，先 read 再改。
+- TS strict 模式，ESM（`type: module`），文件用 `.ts`，导入带 `.js` 扩展名（NodeNext 规范）。
+- 遇到 task 文件未覆盖的实现细节，按 PRD/ADR 的决策自行合理决策，并在最终报告里说明。
+
+## 完成后报告
+
+- 每个 task（01/02/03）做了什么、对应 commit 的 hash（`git log --oneline -3`）
+- 每步本地验证结果（是否通过）
+- 任何自行决策的点、遗留问题或需要人确认的事项
