@@ -27,6 +27,39 @@ export interface WriteStateInput {
   lastUpgradedAt?: string;
 }
 
+export type ChannelKey = keyof InstallState["channels"];
+
+/**
+ * Raised by `requireState` when `<target>/.pi/.pisquad/state.json` is
+ * missing or structurally invalid. The upgrade command catches this and
+ * prints the actionable "not installed" message before exiting non-zero
+ * (PRD non-goal #1: no migration path for legacy bash-installed projects).
+ */
+export class StateMissingError extends Error {
+  readonly target: string;
+  constructor(target: string) {
+    super(`pisquad: ${target} is not installed, run \`pisquad install\` first`);
+    this.name = "StateMissingError";
+    this.target = target;
+  }
+}
+
+export interface VersionDiff {
+  /** assets content version differs — payload needs to be re-staged. */
+  versionChanged: boolean;
+  /** CLI tool version differs — self-update notice (stage-2 task 12) lands here. */
+  cliVersionChanged: boolean;
+  /** Optional channels newly enabled in this upgrade. */
+  newChannels: Array<ChannelKey>;
+  /** Optional channels turned off in this upgrade. */
+  removedChannels: Array<ChannelKey>;
+}
+
+const COMPARABLE_OPTIONAL_CHANNELS: ReadonlyArray<Exclude<ChannelKey, "core">> = [
+  "codegraph",
+  "entire",
+];
+
 /** Read the CLI version embedded in package.json. */
 export function readCliVersion(): string {
   const pkgPath = `${resolvePackageRoot()}/package.json`;
@@ -67,6 +100,8 @@ export function resolveAssetsVersion(fallback: string = readCliVersion()): strin
  * caller can decide whether to treat the target as not-yet-installed.
  *
  * Note: this function never throws — validation failures map to `undefined`.
+ * Upgrade callers should use `requireState` instead, which surfaces the
+ * "not installed" condition as a typed `StateMissingError`.
  */
 export function readState(target: string): InstallState | undefined {
   const file = stateFile(target);
@@ -142,3 +177,45 @@ export function writeState(target: string, partial: WriteStateInput): InstallSta
 
 // Re-export paths helpers used in conjunction with state files.
 export { resolveAsset, stateFile };
+
+// Re-export assets reader so upgrade callers can grab both versions from one
+// module without reaching into the assets lib directly.
+export { readAssetsVersion };
+
+/**
+ * Throwing wrapper around `readState` for the upgrade command. A missing or
+ * unreadable state file is the documented "old bash install" signal — the
+ * upgrader must refuse to run, not silently fall through.
+ */
+export function requireState(target: string): InstallState {
+  const state = readState(target);
+  if (!state) throw new StateMissingError(target);
+  return state;
+}
+
+/**
+ * Compare a previously-recorded install state against the version/channels
+ * an upgrade is about to apply. Pure — does not touch the filesystem.
+ *
+ * `core` is intentionally excluded from the channel diff because the schema
+ * pins it to `true` on both sides (see `writeState`); comparing it would
+ * only ever produce an empty diff.
+ */
+export function compareVersions(
+  prev: InstallState,
+  next: { version: string; cliVersion: string; channels: InstallState["channels"] },
+): VersionDiff {
+  const diff: VersionDiff = {
+    versionChanged: prev.version !== next.version,
+    cliVersionChanged: prev.cliVersion !== next.cliVersion,
+    newChannels: [],
+    removedChannels: [],
+  };
+  for (const key of COMPARABLE_OPTIONAL_CHANNELS) {
+    const prevHas = prev.channels[key];
+    const nextHas = next.channels[key];
+    if (!prevHas && nextHas) diff.newChannels.push(key);
+    else if (prevHas && !nextHas) diff.removedChannels.push(key);
+  }
+  return diff;
+}
