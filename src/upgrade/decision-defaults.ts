@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { select, editor, Separator } from "@inquirer/prompts";
 import pc from "picocolors";
 import { execCapture as defaultExecCapture, which as defaultWhich } from "../lib/env.js";
@@ -32,6 +32,7 @@ export function buildDefaultDecisionDeps(
 ): DecisionDeps {
   const which = overrides.which ?? defaultWhich;
   const execCapture = overrides.execCapture ?? defaultExecCapture;
+  const editorPrompt = overrides.editorPrompt ?? editor;
   return {
     promptStrategy: defaultPromptStrategy,
     promptFileDecision: defaultPromptFileDecision,
@@ -42,7 +43,7 @@ export function buildDefaultDecisionDeps(
         which,
         execCapture,
       }),
-    openEditor: (relPath: string) => defaultOpenEditor(relPath, target, assetsRoot),
+    openEditor: (relPath: string) => defaultOpenEditor(relPath, target, assetsRoot, editorPrompt),
     sha256Content: defaultSha256Content,
   };
 }
@@ -53,6 +54,14 @@ export function buildDefaultDecisionDeps(
 export interface BuildDefaultDecisionDepsOptions {
   which?: (cmd: string) => string | null;
   execCapture?: typeof defaultExecCapture;
+  /**
+   * Override for the `@inquirer/prompts` `editor` prompt. Production
+   * code leaves this unset; tests inject a stub that returns a
+   * pre-canned string (or throws) so they can exercise the merge
+   * buffer construction and the fallback path without spawning a
+   * real editor.
+   */
+  editorPrompt?: typeof editor;
 }
 
 /**
@@ -346,20 +355,21 @@ async function defaultRenderUnifiedDiffForEntry(
 export { defaultRenderUnifiedDiffForEntry };
 
 /**
- * Open the user's editor on the current file and return whatever they
- * saved. Falls back to logging a warning and returning an empty string
- * (which `resolveUpgradeActions` treats as "keep my version") if the editor
- * is missing or exits non-zero.
+ * Open the user's editor on a git-merge-style conflict marker buffer
+ * containing both the current and incoming versions of `relPath`, and
+ * return whatever the user saved. Falls back to logging a warning and
+ * returning an empty string (which `resolveUpgradeActions` treats as
+ * "keep my version") if the editor is missing or exits non-zero.
  *
- * We pass `waitForUserInput: true` so the prompt does not return until the
- * user closes their editor — without this, @inquirer/editor would resolve
- * immediately with the unchanged default and the user would see nothing
- * happen.
+ * The buffer is pre-populated with markers so the user can resolve the
+ * merge in $EDITOR by hand and save directly — there is no second
+ * "press Enter to confirm" step.
  */
-async function defaultOpenEditor(
+export async function defaultOpenEditor(
   relPath: string,
   target: string,
   assetsRoot: string,
+  editorPrompt: typeof editor = editor,
 ): Promise<string> {
   const currentPath = join(target, relPath);
   const newPath = join(assetsRoot, relPath);
@@ -381,16 +391,37 @@ async function defaultOpenEditor(
   }
 
   logger.info(`--- editing ${relPath} ---`);
-  logger.info("New version from assets:");
-  for (const line of incoming.split(/\r?\n/)) logger.info(line);
-  logger.info("--- end of new version; opening $EDITOR with current content as default ---");
+
+  // Ensure each side of the conflict ends with a newline so the `=======`
+  // and `>>>>>>>` markers always land on their own line, even when the
+  // underlying file has no trailing newline.
+  const ensureTrailingNewline = (s: string): string => (s.endsWith("\n") ? s : `${s}\n`);
+  const postfix = editorPostfix(relPath);
+  const mergeBuffer =
+    `<<<<<<< current (your version)\n` +
+    `${ensureTrailingNewline(current)}` +
+    `=======\n` +
+    `${ensureTrailingNewline(incoming)}` +
+    `>>>>>>> incoming (new version)\n`;
 
   try {
-    const edited = await editor({
-      message: `Edit ${relPath} (close the editor when done; an empty file means "keep my version")`,
-      default: current,
-      postfix: ".md",
-      waitForUserInput: true,
+    const edited = await editorPrompt({
+      message: `Edit ${relPath} (resolve the markers and save; an empty file means "keep my version")`,
+      default: mergeBuffer,
+      postfix,
+      waitForUserInput: false,
+      // Reject any buffer that still contains conflict markers — the user
+      // must remove all `<<<<<<<` / `>>>>>>>` before saving or the merge
+      // would be considered unmerged downstream. `@inquirer/editor`'s
+      // `editorTheme.validationFailureMode` defaults to `'keep'`, so the
+      // user keeps their in-progress text and the prompt returns to
+      // `idle` for another edit pass.
+      validate: (text: string) => {
+        if (text.includes("<<<<<<<") || text.includes(">>>>>>>")) {
+          return "Conflict markers are still present — resolve them and save again.";
+        }
+        return true;
+      },
     });
     return edited;
   } catch (error) {
@@ -399,6 +430,21 @@ async function defaultOpenEditor(
     );
     return "";
   }
+}
+
+/**
+ * Compute the `postfix` value passed to `@inquirer/editor` for syntax
+ * highlighting inside the spawned editor. Falls back to the file's own
+ * basename when the path has no extension but starts with a dot (e.g.
+ * `.gitignore`, `.eslintrc`) so those files still get meaningful
+ * highlighting; otherwise defaults to `.txt`.
+ */
+function editorPostfix(relPath: string): string {
+  const ext = extname(relPath);
+  if (ext) return ext;
+  const base = basename(relPath);
+  if (base.startsWith(".") && base.length > 1) return base;
+  return ".txt";
 }
 
 /** Default SHA-256 hex of an in-memory string. */

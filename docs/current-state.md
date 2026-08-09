@@ -12,7 +12,7 @@ pi-squad 已基本成型、可用：多 Agent 协作、文档驱动、会话可�
 - **Skills（2）**：`project-docs`（文档库入口）、`workflow`（分工铁律）
 - **Extensions（4）**：`subagent`（隔离委派）、`codegraph`（8 个代码图查询工具）、`entire`（会话事件桥接）、`wikilink-lint`（docs 链接硬约束）
 - **docs 模板库**：结构即导航 + 渐进式披露的通用骨架
-- **pisquad CLI**（已发布 `@nicklin/pisquad@0.2.0`）：npm 全局包，提供 `install` / `upgrade` / `version` / `help`；upgrade 含 docs 在内的 sha256 diff + tar.gz 备份；self-update 前比较 registry 版本，已是最新则跳过；保留极简 bash bootstrap 兼容 `curl | bash`
+- **pisquad CLI**（已发布 `@nicklin/pisquad@0.2.1`）：npm 全局包，提供 `install` / `upgrade` / `version` / `help`；upgrade 含 docs 在内的 sha256 diff + tar.gz 备份；self-update 前比较 registry 版本，已是最新则跳过；保留极简 bash bootstrap 兼容 `curl | bash`
 - **pisquad upgrade 交互式决策**（0.1.1 之后）：按目录白名单拆分交互区（`docs/**`、`.pi/agents/**`、`.pi/skills/**`，走决策层逐文件询问 adopt/keep/edit）与管理区（`.pi/extensions/**`，保持自动覆盖+备份）；无 tty / CI / `curl | bash` 自动退化为 all-adopt+备份；详见 ADR [[architecture/decisions/0003-interactive-upgrade.md]]
 - **双语 README + MIT license**
 

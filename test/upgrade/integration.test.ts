@@ -685,6 +685,44 @@ describe("upgradeCommand integration", () => {
   });
 });
 
+describe("writeState", () => {
+  it("creates a nested .gitignore under .pi/.pisquad/ that excludes backups/", () => {
+    // Defends the fix where the repo-level .gitignore was intentionally
+    // reduced to a single `.pi/.pisquad/` line; this nested file is the
+    // fallback that guarantees `backups/` is never tracked even if a
+    // future change removes that outer rule.
+    const target = makeTempTarget();
+    const channels: Channels = { core: true, codegraph: false, entire: false };
+    seedTarget(target, channels);
+
+    const gitignore = join(target, ".pi", ".pisquad", ".gitignore");
+    assert.equal(existsSync(gitignore), true, "nested .gitignore is written by writeState");
+    const content = readFileSync(gitignore, "utf-8");
+    assert.equal(content, "backups/\n", "nested .gitignore pins the backups/ subtree");
+  });
+
+  it("does not overwrite an existing nested .gitignore", () => {
+    // User-supplied nested .gitignore must be preserved as-is so people
+    // can extend it (e.g. add their own project-local excludes alongside
+    // backups/). writeState only seeds the file when it is absent.
+    const target = makeTempTarget();
+    const channels: Channels = { core: true, codegraph: false, entire: false };
+    const pisquadDir = join(target, ".pi", ".pisquad");
+    mkdirSync(pisquadDir, { recursive: true });
+    const gitignore = join(pisquadDir, ".gitignore");
+    const userContent = "backups/\nscratch/\n";
+    writeFileSync(gitignore, userContent, "utf-8");
+
+    seedTarget(target, channels);
+
+    assert.equal(
+      readFileSync(gitignore, "utf-8"),
+      userContent,
+      "pre-existing nested .gitignore is preserved verbatim",
+    );
+  });
+});
+
 // Quiet node:test import warning
 void readAssetsVersion;
 void readCliVersion;

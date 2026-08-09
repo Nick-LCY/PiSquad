@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { resolvePackageRoot, resolveAsset, stateFile } from "./paths.js";
 import { atomicWriteFile, ensureDir, pathExists } from "./fs-safe.js";
 import { readAssetsVersion } from "./assets.js";
@@ -171,6 +172,14 @@ export function writeState(target: string, partial: WriteStateInput): InstallSta
 
   const file = stateFile(target);
   ensureDir(`${target}/.pi/.pisquad`);
+  // Ensure backups are git-excluded even if the repo-level .gitignore loses
+  // the `.pi/.pisquad/` rule (defence in depth: the nested .gitignore makes
+  // `backups/` a dead branch under source control regardless of how the
+  // outer .gitignore is configured).
+  const pisquadGitignore = join(target, ".pi", ".pisquad", ".gitignore");
+  if (!existsSync(pisquadGitignore)) {
+    atomicWriteFile(pisquadGitignore, "backups/\n");
+  }
   atomicWriteFile(file, JSON.stringify(next, null, 2) + "\n");
   return next;
 }

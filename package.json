@@ -1,6 +1,6 @@
 {
   "name": "@nicklin/pisquad",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Install and upgrade the pi-squad development foundation",
   "type": "module",
   "bin": {
