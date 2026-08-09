@@ -8,7 +8,9 @@ status: todo
 
 ## 目标
 
-完成 CLI 化对**文档库**的全面同步：更新 `architecture/overview.md` 的安装器段、更新 `current-state.md` 的看板（已在前置步骤完成一部分，本任务做最终态校验）、README 增补 Upgrade safety 段；并**把 `docs/` 镜像到 `assets/docs/`**（worker 跨 `assets/` 操作）。
+完成 CLI 化对**文档库**的全面同步：更新 `architecture/overview.md` 的安装器段、更新 `current-state.md` 的看板（已在前置步骤完成一部分，本任务做最终态校验）、README 增补 Upgrade safety 段；并**将关键文档落到 `assets/docs/`**（worker 跨 `assets/` 操作）。
+
+> 说明：`assets/docs/` 已重构为通用模板骨架（零项目绑定），与本项目 `docs/` 独立维护；本任务的落地动作不构成此后两者的相互同步关系。
 
 ## 完成标准
 
@@ -18,13 +20,13 @@ status: todo
 - [ ] `README.md`：
   - 增补 Upgrade safety 段：解释 backup 机制、`state.json` 用途、误改 docs 的恢复方式（手工 `tar xzf`）
   - 链接到 [[conventions/install-state.md]]
-- [ ] **`assets/docs/` 镜像**：
-  - `assets/docs/architecture/overview.md` 同步仓库根 docs 的更新
-  - `assets/docs/architecture/decisions/0001-pisquad-cli.md` 镜像
-  - `assets/docs/conventions/install-state.md` 镜像
-  - `assets/docs/current-state.md` 镜像（**注意**：`assets/docs/current-state.md` 是消费者那边的看板入口；保留本任务之前的看板内容即可，文档库的状态变更不传染给消费者）
-  - 镜像时仅镜像**结构与文件存在**，不镜像消费者相关的私有内容；如有不一致，本任务统一为「消费者视角」
-- [ ] **不**做 `assets/docs/` ↔ `docs/` 的自动同步脚本（PRD 非目标第 4 条；保持手工约定）
+- [ ] **`assets/docs/` 落地**：
+  - `assets/docs/architecture/overview.md` 随仓库根 docs 的更新落到对应版本
+  - `assets/docs/architecture/decisions/0001-pisquad-cli.md` 落到对应版本
+  - `assets/docs/conventions/install-state.md` 落到对应版本
+  - `assets/docs/current-state.md` 落到对应版本（**注意**：保留当时的看板内容作为占位，后续不随本项目进度更新）
+  - 落地时只取**结构与文件骨架**，不带本项目私有内容；如有不一致，以通用骨架版本为准
+- [ ] **不**做 `assets/docs/` ↔ `docs/` 的同步机制（PRD 非目标第 4 条：`assets/docs/` 与 `docs/` 保持独立）
 - [ ] 本任务结束后，跑 `pisquad install` 在一个临时目录应能把上述 `assets/docs/` 内容铺平
 
 ## 依赖

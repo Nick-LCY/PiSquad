@@ -15,4 +15,4 @@
 ```
 
 ## 清单
-- [[architecture/decisions/0002-self-update-version-check.md]] — self-update 前比较版本，避免重跑死循环（hotfix 0.1.0→0.1.1）
+- （暂无）

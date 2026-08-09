@@ -8,7 +8,7 @@ status: todo
 
 ## 目标
 
-更新仓库根 `README.md`，把安装/使用从「`curl | bash` 单文件 bash 安装器」改成「npm CLI 主推 + curl|bash 兼容入口」。本任务只覆盖 13（文档全面同步）的「安装与命令」部分，docs 库的镜像留到 13。
+更新仓库根 `README.md`，把安装/使用从「`curl | bash` 单文件 bash 安装器」改成「npm CLI 主推 + curl|bash 兼容入口」。本任务只覆盖 13（文档全面同步）的「安装与命令」部分，docs 库的同步留到 13。
 
 ## 完成标准
 
