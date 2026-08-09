@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { logger as defaultLogger } from "../lib/logger.js";
 import { execCapture as defaultExecCapture, which as defaultWhich, type ExecCaptureResult } from "../lib/env.js";
+import { readCliVersion } from "../lib/version.js";
 import type { Logger } from "../lib/plugins/types.js";
 
 /**
@@ -15,10 +16,22 @@ import type { Logger } from "../lib/plugins/types.js";
  *     the binary is missing, or is a non-global install (e.g. `npx @nicklin/pisquad@latest`
  *     sandbox or local dev tree), print "CLI not from global npm, skipping
  *     self-update" and return.
- *   - On a successful `npm install -g @nicklin/pisquad@latest`, return `updated: true`
- *     so the upgrade command can prompt the user to re-run.
- *   - On failure, throw — the upgrade command aborts without touching the
- *     target project.
+ *   - When the install is confirmed global, compare the version embedded in
+ *     this CLI's `package.json` against the latest version on the npm
+ *     registry. Skip the reinstall (return `updated: false`, reason
+ *     `"already latest"`) when they match — this prevents the
+ *     `upgrade → re-run → upgrade` loop that an unconditional
+ *     `npm install -g @nicklin/pisquad@latest` would create, since npm
+ *     considers itself successful even when there is nothing to install.
+ *   - When the registry version differs, run `npm install -g
+ *     @nicklin/pisquad@latest` and, on success, return `updated: true` so the
+ *     upgrade command can prompt the user to re-run with the new binary.
+ *   - When the registry call itself fails (offline, non-zero exit), skip the
+ *     self-update with a warning and return `updated: false`, reason
+ *     `"npm view failed"` — we deliberately do not reinstall on an unknown
+ *     remote state.
+ *   - On `npm install -g` failure, throw — the upgrade command aborts
+ *     without touching the target project.
  *
  * The `deps` hook is for tests only: callers should not pass it in production.
  */
@@ -104,6 +117,22 @@ function runNpmInstallGlobal(): Promise<ExecCaptureResult> {
 }
 
 /**
+ * Ask npm for the latest published version of `@nicklin/pisquad`. Returns
+ * the trimmed version string on success, or `null` when the registry call
+ * failed (offline, non-zero exit, or empty stdout). The caller is expected
+ * to treat a `null` result as "could not determine latest version" and skip
+ * the self-update with a warning rather than risk an unconditional reinstall.
+ */
+async function getLatestVersion(
+  execCapture: (cmd: string, args?: string[]) => Promise<ExecCaptureResult>,
+): Promise<string | null> {
+  const result = await execCapture("npm", ["view", "@nicklin/pisquad", "version"]);
+  if (result.exitCode !== 0) return null;
+  const version = result.stdout.trim();
+  return version.length > 0 ? version : null;
+}
+
+/**
  * Ask npm for the global prefix. New npm exposes `npm prefix -g`; older
  * versions answer the same question via `npm config get prefix`. We try the
  * modern form first and fall back to the legacy one so older Node
@@ -169,6 +198,24 @@ export async function selfUpdate(opts: SelfUpdateOptions = {}): Promise<SelfUpda
     return { updated: false, reason: `not under npm global bin (${binDir})` };
   }
 
+  // Confirmed global install — but only re-run `npm install -g` when the
+  // registry actually has a newer version. An unconditional reinstall always
+  // exits 0 (npm considers itself "up to date"), which previously made
+  // `selfUpdate` return `updated: true` on every run and forced the user
+  // into a `pisquad upgrade → re-run → upgrade → re-run` loop. We compare
+  // the installed version (from this CLI's package.json) to the registry
+  // version (`npm view`) and short-circuit when they match.
+  const currentVersion = readCliVersion();
+  const latestVersion = await getLatestVersion(execCapture);
+  if (latestVersion === null) {
+    logger.warn("Could not check latest pisquad version on registry, skipping self-update");
+    return { updated: false, reason: "npm view failed" };
+  }
+  if (latestVersion === currentVersion) {
+    logger.info(`pisquad is already up to date (v${currentVersion})`);
+    return { updated: false, reason: "already latest" };
+  }
+  logger.info(`Updating pisquad v${currentVersion} → v${latestVersion}`);
   logger.info(`Updating pisquad via npm install -g (timeout ${NPM_TIMEOUT_MS / 1000}s)`);
   let result: ExecCaptureResult;
   try {
