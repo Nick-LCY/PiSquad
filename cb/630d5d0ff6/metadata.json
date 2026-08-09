@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "cb630d5d0ff6",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "README.md",
+    "README.zh.md",
+    "docs/architecture/overview.md",
+    "docs/current-state.md",
+    "package.json",
+    "pisquad"
+  ],
+  "sessions": [
+    {
+      "metadata": "/cb/630d5d0ff6/0/metadata.json",
+      "transcript": "/cb/630d5d0ff6/0/full.jsonl",
+      "compact_transcript": "/cb/630d5d0ff6/0/transcript.jsonl",
+      "content_hash": "/cb/630d5d0ff6/0/content_hash.txt",
+      "prompt": "/cb/630d5d0ff6/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 52056,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1255808,
+    "output_tokens": 24546,
+    "api_call_count": 39
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "cb630d5d0ff6",
+  "session_id": "019fe737-dc58-7931-a110-83d29e8c8a27",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-09T16:49:50.088467083Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "save_step_count": 3,
+  "files_touched": [
+    "README.md",
+    "README.zh.md",
+    "docs/architecture/overview.md",
+    "docs/current-state.md",
+    "package.json",
+    "pisquad"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "277f81baaa74",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 52056,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1255808,
+    "output_tokens": 24546,
+    "api_call_count": 39
+  },
+  "session_metrics": {
+    "turn_count": 10
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-09T16:49:50.002081992Z",
+    "agent_lines": 3,
+    "agent_removed": 49,
+    "human_added": 27,
+    "human_modified": 4,
+    "human_removed": 0,
+    "total_committed": 34,
+    "total_lines_changed": 92,
+    "agent_percentage": 56.52173913043478,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 7,
+      "agent_lines_removed": 49
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 7,
+      "agent_lines_removed": 49
+    }
+  ]
+}
