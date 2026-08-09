@@ -10,8 +10,7 @@
     "dist",
     "assets",
     "README*.md",
-    "LICENSE",
-    "pisquad"
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"

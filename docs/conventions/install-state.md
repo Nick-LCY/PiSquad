@@ -4,12 +4,13 @@
 
 ## 范围
 
-`<target>/.pi/.pisquad/` 由 `pisquad install` 创建、由 `pisquad upgrade` 维护。它包含两类内容：
+`<target>/.pi/.pisquad/` 由 `pisquad install` 创建、由 `pisquad upgrade` 维护。它包含三类内容：
 
 - `state.json` — 安装状态的唯一权威记录
 - `backups/` — upgrade 覆盖前的备份归档
+- `.gitignore` — 嵌套忽略规则（内容 `backups/`），作为根 `.gitignore` 之外的第二层防御
 
-这两类都属于**运行时产物**，归 pisquad 自己管，不属于用户项目内容。
+这三类都属于**运行时产物**，归 pisquad 自己管，不属于用户项目内容。
 
 ## state.json schema
 
@@ -95,6 +96,8 @@ docs/README.md
   .pi/.pisquad/
   ```
 - 但**不**包含 `state.json` 之外的任何 pisquad 写入路径——pisquad 只往这一处写
+
+> **嵌套 `.gitignore`（0.2.1）**：`writeState()` 会在 `.pi/.pisquad/.gitignore` 写入 `backups/`。该文件由 pisquad 自动管理，不存在时创建、已存在时不覆盖。根 `.gitignore` 仍使用 `.pi/.pisquad/` 忽略整个目录；嵌套规则作为防御深度，确保即便根规则被修改，backups 也不会被 git 追踪。
 
 ## 跨文档引用
 

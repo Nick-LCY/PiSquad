@@ -16,7 +16,7 @@ pi-squad 的可执行文件 `pisquad` 目前是仓库根一个 152 行的单文�
 ## 目标
 
 - 提供 `pisquad` / `pisquad install` / `pisquad upgrade` / `pisquad version` / `pisquad help` 五个入口
-- 安装与升级走 npm 全局包分发；同时保留一个极简 bash bootstrap 维持 `curl | bash` 入口
+- 安装与升级走 npm 全局包分发；~~同时保留一个极简 bash bootstrap 维持 `curl | bash` 入口~~（0.2.1 已移除，仅保留 npm 入口）
 - 交互式 checkbox + 方向键，非交互场景（CI / 无 tty / `--yes`）自动退化、退出码正确
 - 版本可复现：assets 内嵌进 npm 包，CLI 版本与 assets 版本一一对应
 - `pisquad upgrade` 必须安全：检测本地修改 → 备份 → 再覆盖
@@ -36,7 +36,7 @@ pi-squad 的可执行文件 `pisquad` 目前是仓库根一个 152 行的单文�
 
 **主路径**：`npm i -g @nicklin/pisquad` 后直接调用 `pisquad`（或 `npx @nicklin/pisquad@latest` 一次性使用）。
 
-**兼容入口**：仓库根保留一个极简 bash 脚本 `pisquad`，检测到 node 后转发到 `pisquad`（已全局安装）或 `npx @nicklin/pisquad@latest`。这样 `curl ... | bash` 形式仍可用，且后续不再用 curl 拉 tarball。
+**兼容入口**：~~仓库根保留一个极简 bash 脚本 `pisquad`，检测到 node 后转发到 `pisquad`（已全局安装）或 `npx @nicklin/pisquad@latest`。这样 `curl ... | bash` 形式仍可用，且后续不再用 curl 拉 tarball。~~（0.2.1 已移除）
 
 ### 2. 仓库结构
 
@@ -118,8 +118,8 @@ pisquad help
 - [x] entire 勾选后，目标 `.pi/extensions/entire/index.ts` 实际存在（bug 已修复）
 - [x] `pisquad upgrade` 在已安装项目：检测到本地修改 → 生成 tar.gz 备份 → 覆盖 → 打印提示；state.json 前进
 - [x] **`docs/` 的修改也被 diff + 备份保护**（修改 `<dir>/docs/README.md` 后 upgrade 触发备份）
-- [x] `npm pack --dry-run` 确认包内含 `dist/` `assets/` `README*.md` `LICENSE` `pisquad`，**不含** `src/` `node_modules/` `.pi/` `docs/`
-- [x] `curl | bash` bootstrap 在 node 就绪时正确转发到全局 `pisquad` 或 `npx @nicklin/pisquad@latest`
+- [x] `npm pack --dry-run` 确认包内含 `dist/` `assets/` `README*.md` `LICENSE`，**不含** `src/` `node_modules/` `.pi/` `docs/`
+- [x] ~~`curl | bash` bootstrap 在 node 就绪时正确转发到全局 `pisquad` 或 `npx @nicklin/pisquad@latest`~~（0.2.1 已移除）
 - [x] 旧项目（无 state.json）执行 `pisquad upgrade` 报清晰错误并退出非零码，**不写迁移工具**
 
 相关文档：[[architecture/overview.md]]，架构决策 [[architecture/decisions/0001-pisquad-cli.md]]，约定 [[conventions/install-state.md]]，任务列表 `tasks/pisquad-cli/`，看板 [[current-state.md]]。

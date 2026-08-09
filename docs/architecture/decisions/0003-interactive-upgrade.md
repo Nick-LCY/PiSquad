@@ -62,6 +62,19 @@ ADR [[architecture/decisions/0001-pisquad-cli.md]] 第 8 / 9 条确立了「upgr
 - 编辑后内容 hash 与新版本一致 → 标记 `matchesTheirs = merged`，下游按「采用新」处理（避免再次重复 prompt）
 - **不做真正的三方合并**：不拉 git merge base，不引入旧 npm merge 包。理由：成本高、对一次性安装流程过度设计；`$EDITOR` 已给用户保留「自己合并」的入口
 
+> **0.2.1 更新**：editor 行为已增强：
+> - 选择 Edit 后直接启动 `$EDITOR`（`waitForUserInput: false`），无需再次按 Enter。
+> - editor buffer 预填 git-merge conflict marker 格式，同时展示当前版本和新版本：
+>   ```
+>   <<<<<<< current (your version)
+>   [当前内容]
+>   =======
+>   [新版本内容]
+>   >>>>>>> incoming (new version)
+>   ```
+> - 保存时若仍残留 `<<<<<<<` 或 `>>>>>>>` 标记，validate 会拦截并提示重新编辑（`validationFailureMode: "keep"` 保留用户输入）。
+> - `postfix` 根据原文件扩展名动态生成（`.ts` → `.ts`，`.gitignore` → `.gitignore`，无扩展名 → `.txt`），确保 `$EDITOR` 语法高亮正确。
+
 ### 5. 触发条件与非交互退化
 
 - 有 tty **且**用户未指定 `--interactive` / `--no-interactive` → 走交互

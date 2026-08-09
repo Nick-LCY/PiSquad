@@ -42,13 +42,6 @@ npm i -g @nicklin/pisquad
 pisquad install .            # 安装到当前目录
 ```
 
-如果机器上已经有 Node.js ≥ 18 但不方便 `npm i -g`，仓库自带的 bash bootstrap 仍然可用：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/earendil-works/pisquad/main/pisquad | bash
-# bootstrap 会检测 node，然后转发到全局的 `pisquad` 或 `npx @nicklin/pisquad@latest`
-```
-
 交互流程会带你选择可选 channel（codegraph / entire）。CI / 管道场景可以用 `--yes`（只装 core）或显式指定：
 
 ```bash
@@ -179,7 +172,7 @@ docs/
 │   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
 │   ├── docs/            # 文档库（模板骨架，详见上节）
 │   └── codegraph.json   # codegraph 配置
-├── pisquad              # bash bootstrap（转发到全局 `pisquad` 或 `npx @nicklin/pisquad@latest`）
+
 ├── src/                 # CLI 的 TypeScript 源码（`bin.ts`、`main.ts`、`commands/`、`lib/`）
 ├── dist/                # 构建产物（gitignored，打包进 npm tarball）
 ├── package.json         # npm 包元信息与依赖清单

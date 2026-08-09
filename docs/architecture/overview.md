@@ -10,7 +10,7 @@ pi-squad 是一套基于 pi coding agent 的可复用多 Agent、文档驱动开
 
 两种使用方式：
 
-- **`pisquad` CLI**（推荐）：`npm i -g @nicklin/pisquad`；也兼容 `curl | bash` 一键安装
+- **`pisquad` CLI**（推荐）：`npm i -g @nicklin/pisquad`
 - **手动复制**：把 `assets/.pi/` 与 `assets/docs/` 拷贝进现有项目，立刻获得编排与文档约束能力
 
 ## 架构
@@ -77,7 +77,7 @@ pi-squad 是一套基于 pi coding agent 的可复用多 Agent、文档驱动开
 - **可分发包集中在 `assets/`**：维护种子仓库时不被自身的 `.pi/` 自动加载污染，根目录保持普通仓库；消费者把 `assets/` 内容拷到各自根目录
 - **结构即导航 + 渐进式披露**：每层目录配一份 README 作为该层总地图；从进度看板出发，按链接下钻详情，不一次性加载
 - **wikilink 硬约束**：docs 内文档互引一律用 wikilink，且仅指向 docs/ 内真实存在的文件，由 `wikilink-lint` 自动校验（越界或失效即拒绝写入）
-- **pisquad 已从 bash 安装器升级为 npm CLI**：见 [[architecture/decisions/0001-pisquad-cli.md]]；分发、版本管理与升级路径都迁移到 npm 包形式，但保留极简 bash bootstrap 兼容 `curl | bash` 入口
+- **pisquad 已从 bash 安装器升级为 npm CLI**：见 [[architecture/decisions/0001-pisquad-cli.md]]；分发、版本管理与升级路径全部迁移到 npm 包形式，不再提供 `curl | bash` 入口
 - **upgrade 引入交互式决策层**：见 [[architecture/decisions/0003-interactive-upgrade.md]]；按目录白名单拆交互区（`docs/**` + `.pi/agents/**` + `.pi/skills/**`）与管理区（`.pi/extensions/**`），交互区走决策层逐文件询问 adopt/keep/edit，merge 走 `$EDITOR` 方案 A（不做三方 merge base）；非交互 / 无 tty 退化为 all-adopt+备份
 
 ---
