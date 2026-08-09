@@ -1,0 +1,134 @@
+了解一下项目目前的进度
+
+---
+
+我正在本地测试cli的upgrade功能，我发现交互式界面无法正常进入，以下是详细操作日志：
+sankabox@7640hs:~/code/EasyCV$ node /home/sankabox/code/PiExperiment/dist/bin.js upgrade --no-self --dry-run
+pisquad upgrade → /home/sankabox/code/EasyCV (dry-run)
+Would adopt: 1 / keep: 20 / edit: 0 / backup: 1 / remove: 0
+modified (1):
+  M docs/architecture/overview.md
+added (0):
+removed (20):
+  D docs/architecture/ai-providers.md (will keep)
+  D docs/architecture/decisions/01-mvp-foundation.md (will keep)
+  D docs/architecture/decisions/02-data-model.md (will keep)
+  D docs/architecture/decisions/03-editor.md (will keep)
+  D docs/architecture/decisions/04-ui-primitives.md (will keep)
+  D docs/architecture/decisions/05-operation-queue-stability.md (will keep)
+  D docs/architecture/decisions/06-ai-features.md (will keep)
+  D docs/architecture/decisions/07-client-first.md (will keep)
+  D docs/tasks/0023-phase1/01-vite-scaffold.md (will keep)
+  D docs/tasks/0023-phase1/02-localstore.md (will keep)
+  D docs/tasks/0023-phase1/03-pdf-service.md (will keep)
+  D docs/tasks/0023-phase1/04-hooks.md (will keep)
+  D docs/tasks/0023-phase1/05-router-pages.md (will keep)
+  D docs/tasks/0023-phase1/06a-settings.md (will keep)
+  D docs/tasks/0023-phase1/06b-profiles.md (will keep)
+  D docs/tasks/0023-phase1/06c-sources.md (will keep)
+  D docs/tasks/0023-phase1/06d-home.md (will keep)
+  D docs/tasks/0023-phase1/06e-editor.md (will keep)
+  D docs/tasks/0023-phase1/07-cleanup.md (will keep)
+  D docs/tasks/0023-phase1/README.md (will keep)
+unchanged (25)
+DRY RUN — no changes made
+sankabox@7640hs:~/code/EasyCV$ node -e "console.log(process.stdin.isTTY, process.stdout.isTTY)"    
+true true
+sankabox@7640hs:~/code/EasyCV$ node /home/sankabox/code/PiExperiment/dist/bin.js upgrade --no-self
+pisquad upgrade → /home/sankabox/code/EasyCV
+Backed up 1 files → /home/sankabox/code/EasyCV/.pi/.pisquad/backups/20260809T124849Z-before-upgrade.tar.gz
+codegraph.json already present, keeping user copy
+Channels: core + codegraph + entire
+Modified: 1, added: 0
+Adopted: 1, kept: 20, edited: 0
+Backup: 1 file(s) archived
+  /home/sankabox/code/EasyCV/.pi/.pisquad/backups/20260809T124849Z-before-upgrade.tar.gz
+State: /home/sankabox/code/EasyCV/.pi/.pisquad/state.json
+upgrade complete
+kept 20 user modification(s) — they will reappear in next upgrade's diff
+
+---
+
+Task: 侦察任务:定位 pisquad CLI `upgrade` 交互式决策为何在真实 tty 下不进入交互。
+
+**背景(设计意图,来自 docs/architecture/decisions/0003-interactive-upgrade.md):**
+- 触发条件(§5):有 tty **且**用户未指定 `--interactive`/`--no-interactive` → 走交互(逐文件 prompt,modified 默认 keep);无 tty / CI=true / curl|bash → 退化为「全部采用新 + 备份」(all-adopt)。
+- 区分两个变量:`interactive`(最终行为,由 tty + flag 推导)与 `interactiveSetByUser`(用户是否显式指定 flag)。
+- removed 文件仅 `--prune` 时进 prompt,非 prune 自动 keep(不打扰)。
+
+**观测到的 bug:**
+命令:`node dist/bin.js upgrade --no-self`(未传任何 interactive flag)。
+环境:已单独验证 `process.stdin.isTTY === true && process.stdout.isTTY === true`,且 `CI` 未设置。
+结果:没有任何交互 prompt 弹出,直接输出 `Adopted: 1, kept: 20, edited: 0`。其中 1 个 modified 文件被 **adopted**(非交互退化的特征;若真进了交互,modified 默认应是 keep)。
+
+**待确认的假设:**
+tty 检测 / `interactive` 推导失败,导致即使 stdin/stdout 都是 tty、且无 flag,`interactive` 仍被算成 false,从而走了非交互 all-adopt 分支。请确认或推翻。
+
+**侦察范围(只读,不要改任何文件):**
+- `src/commands/upgrade.ts`:interactive flag 解析、tty 检测、`interactive`/`interactiveSetByUser` 推导、决策层调用处、dry-run 分支与真实分支差异。
+- `src/upgrade/decision.ts` 与 `src/upgrade/decision-defaults.ts`:非交互时是否返回 all-adopt;default deps 在 interactive=false 时是否短路不弹 prompt。
+- `src/lib/env.ts`:是否有 tty/CI 检测 helper。
+- `src/main.ts`:flag 是否在 dispatch 层就被解析/给默认。
+
+**产出要求(结构化报告):**
+1. 根因:一句话 + 证据(文件:行号 + 代码片段)。
+2. `interactive` 推导的完整数据流:从 flag 解析到 decision 调用,逐步标注取值。
+3. 为什么 tty=true 却被判定为非交互的具体代码路径(例如检测了错误字段、CI 误判、flag 默认值写反、短路条件错误等)。
+4. 修复建议(可选 1-2 条,但不要改代码)。
+
+---
+
+可以，开始按workflow推进
+
+---
+
+Task: 任务:为 pisquad CLI `upgrade` 交互式决策 bug 制定实施计划(worker 会逐字执行,请具体)。
+
+## 根因(已取证确认,两处代码联手导致 bug)
+现象:未传 `--interactive`/`--no-interactive` 且有 tty 时,upgrade 不进 per-file 交互,而是走 all-adopt(modified 被直接 adopt)。
+
+1. `src/commands/upgrade.ts:261` 调用决策层时:
+   ```ts
+   interactive: options.interactive === true,
+   ```
+   用户未传 flag 时 `options.interactive === undefined`,被 `=== true` 收窄成 `false`。
+2. `src/upgrade/decision.ts:236-241` `shouldPrompt`:
+   ```ts
+   function shouldPrompt(input: DecisionInput): boolean {
+     if (input.yes === true) return false;
+     if (input.interactive === false) return false;   // 未传 flag 时 input.interactive===false 必命中
+     if (!input.isInteractiveEnv) return false;
+     return true;
+   }
+   ```
+   不区分「显式 `--no-interactive`」与「未传 flag」。导致 ADR-0003 §5 的「tty 自动交互」路径永远走不通(`isInteractive()` 在自动交互场景下实际是死代码)。
+
+注意:dry-run 路径(`upgrade.ts:198-212`)硬编码 `interactive:false, interactiveSetByUser:true, isInteractiveEnv:false, yes:true`,不要动它。
+
+## 设计意图(ADR-0003 §5,见 docs/architecture/decisions/0003-interactive-upgrade.md)
+- 有 tty 且未指定 flag → 走交互(per-file prompt,modified 默认 keep)
+- 无 tty / CI / curl|bash → 退化为 all-adopt + 备份
+- `--interactive` / `--no-interactive` 显式覆盖;`--interactive` 在无 tty 时 warn 提示已退化
+
+## 修复方向(已与编排者确认)
+改 `shouldPrompt`,复用已传入的 `interactiveSetByUser` 来识别「显式 opt-out」:
+```ts
+function shouldPrompt(input: DecisionInput): boolean {
+  if (input.yes === true) return false;
+  if (input.interactiveSetByUser && input.interactive === false) return false; // 仅显式 --no-interactive
+  return input.isInteractiveEnv;   // 未传 flag / 显式 --interactive 都落到 tty 判定
+}
+```
+
+## 你的任务(产出 Goal/编号步骤/Files to Modify/New Files/Risks)
+需覆盖:
+1. 改 `src/upgrade/decision.ts` 的 `shouldPrompt`;同步更新 `DecisionInput.interactive` 字段的 JSDoc,澄清它在边界被 `=== true` 收窄、需配合 `interactiveSetByUser` 判读。
+2. 补测试:task 15 的 38 项测试漏了「未传 flag + tty → 进交互」这个核心场景。先用 `find`/`grep` 定位 decision 的测试文件(可能在 `test/` 或 `tests/` 或与 src 同级),补:
+   - 未传 flag(`interactiveSetByUser=false`)+ `isInteractiveEnv=true` → shouldPrompt=true / mode=per-file
+   - 显式 `--no-interactive`(`interactiveSetByUser=true, interactive=false`)→ all-adopt
+   - 显式 `--interactive` 无 tty(`interactiveSetByUser=true, interactive=true, isInteractiveEnv=false`)→ 退化
+   - `--yes` → all-adopt(回归保护)
+3. 重新 build dist(`npm run build` / tsup,单 entry `src/bin.ts`),验证 `dist/bin.js` 已反映新 `shouldPrompt` 逻辑。
+4. 跑测试确认全过。
+
+动手前先 read:`src/upgrade/decision.ts`(DecisionInput 定义、shouldPrompt、resolveUpgradeActions 全貌)、定位并 read 现有 decision 测试文件、`package.json`(scripts)、`tsup.config.ts`。
