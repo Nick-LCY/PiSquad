@@ -1,0 +1,147 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "5c7f84061a3b",
+  "session_id": "019fe59a-3c2d-76de-8362-ee8c65e312f2",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-09T12:47:13.155074239Z",
+  "branch": "main",
+  "checkpoints_count": 16,
+  "save_step_count": 12,
+  "files_touched": [
+    "assets/docs/architecture/decisions/0001-pisquad-cli.md",
+    "assets/docs/architecture/decisions/0002-self-update-version-check.md",
+    "assets/docs/architecture/decisions/README.md",
+    "assets/docs/architecture/overview.md",
+    "assets/docs/conventions/install-state.md",
+    "docs/tasks/pisquad-cli/08-readme-basics.md",
+    "docs/tasks/pisquad-cli/13-docs-sync.md"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "16afba0e8d54",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 161337,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 2724160,
+    "output_tokens": 106640,
+    "api_call_count": 37
+  },
+  "session_metrics": {
+    "turn_count": 16
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-09T12:47:12.970481275Z",
+    "agent_lines": 17,
+    "agent_removed": 309,
+    "human_added": 1,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 18,
+    "total_lines_changed": 327,
+    "agent_percentage": 99.69418960244649,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3467,
+      "agent_lines_removed": 51
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3467,
+      "agent_lines_removed": 51
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3496,
+      "agent_lines_removed": 51
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3358,
+      "agent_lines_removed": 49
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3358,
+      "agent_lines_removed": 49
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3358,
+      "agent_lines_removed": 49
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3358,
+      "agent_lines_removed": 49
+    },
+    {
+      "checkpoint_number": 9,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3379,
+      "agent_lines_removed": 358
+    },
+    {
+      "checkpoint_number": 10,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3379,
+      "agent_lines_removed": 358
+    },
+    {
+      "checkpoint_number": 11,
+      "user_lines_added": 10,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3511,
+      "agent_lines_removed": 133,
+      "user_added_per_file": {
+        ".pi/.pisquad/state.json": 10
+      }
+    },
+    {
+      "checkpoint_number": 12,
+      "user_lines_added": 10,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3379,
+      "agent_lines_removed": 362,
+      "user_added_per_file": {
+        ".pi/.pisquad/state.json": 10
+      }
+    },
+    {
+      "checkpoint_number": 13,
+      "user_lines_added": 10,
+      "user_lines_removed": 0,
+      "agent_lines_added": 3379,
+      "agent_lines_removed": 362,
+      "user_added_per_file": {
+        ".pi/.pisquad/state.json": 10
+      }
+    }
+  ]
+}

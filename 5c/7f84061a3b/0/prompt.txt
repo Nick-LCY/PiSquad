@@ -1,0 +1,364 @@
+了解一下项目目前的状态
+
+---
+
+我现在比较好奇pisuad upgrade这个功能的实现。这个功能现在会做什么事情？
+
+---
+
+我现在希望再优化一下这部分的逻辑。主要是目前upgrade的时候就是直接打包旧文件了。其实我希望能有一个新旧差异对比，然后用户选择：
+1. 删除旧
+2. 忽略新
+3. 编辑旧（类似merge）
+这样子的操作，来完成更新，你有什么想法吗？
+
+---
+
+.pi的agents我觉得也需要进行对比，因为不同的项目中，用户可能会修改agents的markdown文件来达到更好的效果。
+
+---
+
+可以，就按这样来
+
+---
+
+Task: 侦察 pisquad upgrade 的实现现状与交互基础设施，为'交互式 upgrade 改造'功能提供结构化上下文。彻底度 medium。重点侦察以下 6 项：
+
+1. **install 命令的交互范式**：src/commands/install.ts 如何做交互式选择——@inquirer/prompts 的具体用法（checkbox/select 还是别的）、TTY 退化逻辑、--yes/--with/--without/--all 决策表实现在哪、无 tty 时怎么退出码 0 不卡死。这是 upgrade 交互要复用的范式。
+2. **TTY/非交互判定**：src/lib/env.ts 里如何判断 isTTY、如何解析环境变量 PISQUAD_WITH/PISQUAD_WITHOUT、--yes 的优先级决策表。
+3. **upgrade 主流程调用链**：src/commands/upgrade.ts 的 13 步流程，逐个标注每步调用的函数与关键参数，尤其第⑤步 diffTree 的 includes 列表怎么构造、第⑦步 createBackup 的入参、第⑧步 copyDir 的 filter。我要知道'决策层'该插在哪个精确位置。
+4. **现有测试模式**：项目里 upgrade / install / diff / backup 的测试文件在哪、用什么测试框架、如何注入 deps 桩（参考 src/upgrade/self.ts 的 SelfUpdateDeps 模式——怎么桩掉 spawn/execCapture）。这决定新决策层怎么测。
+5. **state.json 结构**：docs/conventions/install-state.md 里 state.json 的完整字段（version/cliVersion/channels/lastUpgradedAt 等），以及 src/lib/version.ts 里 readState/writeState/requireState/compareVersions 的签名。
+6. **diff/backup 接口签名**：src/lib/diff.ts 的 DiffPlan / PkgInclude / diffTree 签名，src/lib/backup.ts 的 createBackup/BackupEntry 签名——决策层要在 DiffPlan 上叠加决策。
+
+产出要求：文件清单(带行号) + 关键代码片段(精简) + upgrade 调用链图 + 测试桩模式 + '交互层应从哪里开始改'的结论。只读侦察，不改任何文件。
+
+---
+
+我现在在本地要如何进行测试？我本地有一些其他仓库已经用了pisquad了，然后本地目前也装了正式版本的pisquad。
+
+---
+
+构建这一步失败了：sankabox@7640hs:~/code/PiExperiment$  node dist/bin.js upgrade --help 
+file:///home/sankabox/code/PiExperiment/dist/bin.js:12
+  throw Error('Dynamic require of "' + x + '" is not supported');
+        ^
+
+Error: Dynamic require of "tty" is not supported
+    at file:///home/sankabox/code/PiExperiment/dist/bin.js:12:9
+    at node_modules/yoctocolors-cjs/index.js (file:///home/sankabox/code/PiExperiment/dist/bin.js:786:15)
+    at __require2 (file:///home/sankabox/code/PiExperiment/dist/bin.js:18:50)
+    at file:///home/sankabox/code/PiExperiment/dist/bin.js:3109:38
+    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)
+    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+
+Node.js v20.20.2
+
+---
+
+Task: 修复 pisquad CLI 的构建产物运行时崩溃问题。**这次必须实际运行 dist/bin.js 验证，不能只看 tsup "build success"。**
+
+【问题】`node dist/bin.js upgrade --help` 报错：
+```
+Error: Dynamic require of "tty" is not supported
+    at dist/bin.js:12
+    at node_modules/yoctocolors-cjs/index.js (dist/bin.js:786)
+```
+根因：yoctocolors-cjs（CommonJS 包）被 tsup 内联进 ESM bundle，运行时它的 require("tty") 在 ESM 下失败。这个 CJS 依赖大概率是本次新增的 @inquirer/prompts 的 editor prompt（src/upgrade/decision-defaults.ts 里用了 inquirer 的 editor()）拉进来的传递依赖。注意：之前 install 命令也用 @inquirer/prompts 但能正常打包，是因为没用到 editor 子模块、tree-shaking 去掉了 CJS 依赖链；现在 editor 被实际引用，CJS 依赖被拉进 ESM bundle 导致崩溃。
+
+【复现】先确认：
+```
+cd /home/sankabox/code/PiExperiment
+npm run build
+node dist/bin.js upgrade --help   # 应复现 Dynamic require of "tty" 错误
+```
+
+【调查】
+1. 读 tsup.config.ts 看当前打包配置（format / platform / external / noExternal / banner 等）。
+2. 读 package.json 看 type 字段、bin 字段、dependencies/devDependencies（确认 @inquirer/prompts 在 dependencies；yoctocolors-cjs 是谁的传递依赖）。
+3. 用 `npm ls yoctocolors-cjs` 确认它来自哪个包（大概率 @inquirer/editor → external-editor → yoctocolors-cjs，或 @inquirer/prompts 的某子包）。
+4. 确认之前 install 用的 inquirer 子包（checkbox/select）是否也走 ESM、为何之前不炸——理解这个有助于选对修复方案。
+
+【修复目标】让 `node dist/bin.js` 产出的 ESM bundle 能正常运行，editor/expand 等 inquirer prompt 不再因 CJS require 崩溃。候选方案（由你判断选最合适的，可组合）：
+- 方案A（external，推荐优先考虑）：在 tsup.config.ts 把 @inquirer/* 及相关 CJS 传递依赖标记为 external（不内联），运行时从 node_modules 加载。Node 的 ESM 能 import CJS，require 在 CJS 模块内部正常工作。**前提**：这些依赖必须在 package.json 的 dependencies（不是 devDependencies），且 npm pack 后全局安装能装到——验证 `npm pack --dry-run` 确认依赖会被安装、npm pack 内容仍合规（含 dist/+assets/+README+LICENSE+pisquad，不含 src/）。
+- 方案B（createRequire shim）：tsup banner 注入 `import { createRequire } from "node:module"; const require = createRequire(import.meta.url);`，让 bundle 内的 require 都能解析。优点是自包含、不依赖 external 声明；缺点是 bundle 仍内联 CJS 代码、包体稍大。
+- 方案C：其他你认为更合适的方案（如调整 platform、format dual、shims 选项等）。
+
+选型原则：优先保证「npm i -g 后全局安装的用户能正常运行」+「npm pack 内容合规」+「改动最小最稳」。说明你选了哪个方案及理由。
+
+【验证标准（全部必须实跑通过）】
+1. `npm run build` 成功。
+2. `node dist/bin.js upgrade --help` 正常输出帮助文本（含 --interactive / --no-interactive / --no-self / --dry-run / --prune）。
+3. `node dist/bin.js version` 正常输出版本。
+4. 建一个临时目录模拟已安装项目（mkdtemp + 拷贝 assets/.pi 和 assets/docs + 写一个 state.json，或直接挑一个现成的），跑 `node dist/bin.js upgrade <tmp> --no-self --dry-run` 正常输出决策预算、不报错。
+5. `node dist/bin.js upgrade <tmp> --no-self < /dev/null`（模拟无 tty）能正常退出码 0、不卡死、不报 Dynamic require。
+6. `npm test` 仍全过（38 项）。
+7. `npm pack --dry-run` 确认包内容合规（dist/ + assets/ + README* + LICENSE + pisquad；不含 src/ / node_modules/ / .pi/ / docs/）。若选了 external 方案，确认被 external 的依赖确实在 dependencies 且会被 npm 安装。
+8. `npx tsc --noEmit` 零错误。
+
+【产出】返回：根因确认（yoctocolors-cjs 来自哪个包）、选用的修复方案及理由、改动的文件（tsup.config.ts / package.json 等）+ 改了什么、8 项验证的实际运行输出摘要（贴关键几行）、有无副作用或需注意点。**只改构建配置和必要代码，不要改 docs/，不要改业务逻辑。**
+
+---
+
+几个问题：
+1. assets中的模板被污染了
+2. 现在upgrade是如何检测已有文件的？我在已有pisquad的仓库中运行却提示我未安装pisquad
+
+---
+
+Task: 侦察 pisquad upgrade 的「已安装检测」逻辑，回答：为什么在一个已经装了 pisquad 的仓库跑 upgrade 会报「未安装」。彻底度 medium。
+
+重点查清楚：
+1. src/lib/version.ts 里 requireState / readState 的实现——它读取的 state.json 的确切路径是怎么构造的？依赖哪个 helper（如 src/lib/paths.ts 的 stateFile）？state.json 的预期位置是 `<target>/.pi/.pisquad/state.json` 还是别的？
+2. StateMissingError 在什么条件下抛出？错误文案是什么（用户看到的「未安装」提示原文）？
+3. src/commands/upgrade.ts 第2步如何调用 requireState(target)，target 是怎么解析的（resolveTarget，来自 src/lib/paths.ts）——resolveTarget 默认值是什么（process.cwd()?）？
+4. src/lib/paths.ts 里 resolveTarget / stateFile / resolveAsset 的实现，把路径拼接逻辑讲清楚。
+5. 对比 install 命令（src/commands/install.ts）把 state.json 写到哪里——install 写的路径和 upgrade 读的路径是否一致？如果不一致就是 bug。
+6. 旧 bash 安装的仓库（无 state.json）会怎样——PRD 说旧项目不支持、要重装，确认这个报错路径的文案。
+
+产出：requireState 的判定条件（伪代码）、state.json 的确切路径公式、install 写 vs upgrade 读的路径是否一致、「未安装」错误的完整触发条件清单、以及你判断的「已有 pisquad 却报未安装」最可能的几个原因（如：旧 bash 安装无 state、state.json 位置不匹配、target 解析到了错目录等）。只读侦察，不改任何文件。
+
+---
+
+关于第一点assets，我需要你派archivist重新清理一下，因为我注意到在上次commit的时候其实就已经污染到了。然后关于问题2，没有state.jsdon。但我想了解一下state.json有什么用处？是不是必须保留的。
+
+---
+
+Task: 清理 assets/docs/ 被开发进度污染的消费者模板。**本次特例授权你可以改 assets/docs/ 下的文件（仅限清理/删减），但绝不碰仓库内 docs/、src/、test/、配置文件。**
+
+【背景】assets/docs/ 是「消费者模板」——装 pisquad 的用户项目里的文档骨架，应与 pisquad 自身的开发进度**解耦**（见 docs/current-state.md：「assets/docs/ 镜像关键文档（overview / decisions/0001 / conventions/install-state），消费者模板视角与仓库内开发进度解耦」）。但上次 commit 31d098a 把 pisquad 自己的 hotfix ADR（0002 self-update 死循环修复）镜像进了 assets/docs/，属于污染。需要清理回「消费者模板」该有的样子。
+
+【判断标准（铁律）】
+- **消费者模板该有**：描述「装了 pisquad 的项目长什么样 / 怎么用 / 约定是什么」——稳定、中性、面向使用者。current-state 明确镜像的三类：overview（系统总览范例）、decisions/0001（CLI 化架构决策范例）、conventions/install-state（安装升级约定）+ 必要骨架索引（README）。
+- **开发进度污染（要清掉）**：pisquad 工具自身怎么演进、改了什么 bug、加了什么特性——即工具的 hotfix/增量特性 ADR、任务进度、当前状态看板等。典型如 0002（self-update hotfix）、0003（交互式 upgrade）这类工具自身的演进记录，不是消费者项目模板。
+
+【操作准则】
+1. **只做删减/恢复，严禁新增任何内容**（上次就是因为新增/同步导致污染，这次反过来只清理）。
+2. 逐一 read assets/docs/ 下所有文件，按上述标准判断每个文件/每段内容属于「消费者模板」还是「开发进度污染」。
+3. 确定要清理的：
+   - 删除 assets/docs/architecture/decisions/0002-self-update-version-check.md（明确的 hotfix ADR 污染）。
+   - 修 assets/docs/architecture/decisions/README.md：清单移除对 0002 的引用，整理成正确反映 assets/docs/ 实际该有的消费者镜像（0001 是该镜像的范例应保留列出；不要列 0002/0003）。
+   - 检查 overview / 0001 / install-state 这三个「该保留」的文件：确认它们的内容是稳定的消费者视角，**没有**混入开发进度/任务看板/hotfix 记录。若发现某段是开发进度性质（如被追加了「第15条交互式 upgrade」「任务 15」之类的工具演进内容），则把那段删掉恢复成消费者视角；若是稳定范例则不动。
+4. 改完跑 `git status --short` 确认：只动了 assets/docs/，仓库内 docs/ 的开发文档改动原样保留、没被误伤。
+
+【不要做】
+- 不要新增任何文件或段落。
+- 不要碰 assets/.pi/（agents/skills/extensions 真模板，本就干净）。
+- 不要碰仓库内 docs/（那是开发文档，保留）。
+- 不要碰 src/test/package.json/tsup.config.ts 等。
+
+【产出】返回：read 后判断的 assets/docs/ 文件清单及每个的归类（消费者模板保留 / 开发进度清理）、实际删了哪些文件/段落、README 最终清单内容、git status 确认只动 assets/docs/ 且 docs/ 保留的输出。
+
+---
+
+不只是这些，包括decisions下面也有内容，你安排scout摸一次底，然后安排一次彻底的清理
+
+---
+
+Task: 全面摸底 assets/docs/ 被「开发进度污染消费者模板」的情况，为后续彻底清理提供完整的逐项清单。彻底度 thorough。**只读侦察，不改任何文件。**
+
+【背景与判断标准】
+assets/docs/ 是「消费者模板」——装 pisquad 的用户项目里的文档骨架，应与 pisquad 自身开发进度**解耦**。docs/current-state.md 明确其镜像范围：「assets/docs/ 镜像关键文档（overview / decisions/0001 / conventions/install-state），消费者模板视角与仓库内开发进度解耦」。
+
+判断每个文件/段落归属两类之一：
+- **消费者模板（保留）**：稳定、中性、面向使用者，描述「装了 pisquad 的项目长什么样 / 怎么用 / 约定是什么」。current-state 明确镜像的三类：overview（系统总览范例）、decisions/0001（CLI 化架构决策范例）、conventions/install-state（安装升级约定）+ 必要骨架索引（README）。
+- **开发进度污染（清理）**：pisquad 工具自身怎么演进、改了什么 bug、加了什么特性——即工具的 hotfix/增量特性 ADR、任务进度、当前状态看板、changelog。凡是不在 current-state 镜像范围、属于「pisquad 工具自身演进记录」的，都是污染。
+
+【摸底任务】
+1. `ls -R assets/docs/` 列出全树所有文件，先掌握完整清单。
+2. **逐一 read** assets/docs/ 下每个文件的完整内容（不要只看文件名），判断它是「消费者模板」还是「开发进度污染」。每个文件给出：归类（保留/删除/清理某段）+ 具体理由 + 若清理某段则指明是哪几行/哪段。
+3. **重点排查 decisions/ 目录**（用户特别点名）：每个 ADR 文件单独判断——0001 是 current-state 明确镜像的范例（保留，但要确认其**内容**没被工具演进段落污染，比如有没有被追加「第15条交互式 upgrade」之类的工具特性记录）；0002/0003 等不在镜像范围的都是污染（删）。同时看 decisions/README.md 的清单是否列了不该列的开发决策。
+4. 检查 overview / install-state / README 等「该保留」的文件：内容是否混入了开发进度（如 overview 里塞「升级决策层」这类内部实现细节、install-state 里塞工具自身的行为变更记录、README 列了开发任务/状态等）。若有，指明具体段落。
+5. 用 `git log --oneline -- assets/docs/` 和 `git show <commit> -- assets/docs/<文件>` 追溯污染是哪个 commit 引入的，帮助确认清理边界。尤其看 31d098a、6c45ef1、ba4e565 这几个动过 assets/docs/ 的 commit。
+6. 对照仓库内 docs/ 的对应文件（如 docs/architecture/decisions/0001 vs assets/docs/architecture/decisions/0001），看 assets/docs/ 是否被 docs/ 的开发进度传染——但注意：目标是让 assets/docs/ 成为干净的消费者模板，不是让它跟 docs/ 一致。
+
+【产出（结构化清单，供清理 agent 逐条执行）】
+- assets/docs/ 完整文件树
+- 逐文件清理表：| 文件 | 归类(保留/删/清理某段) | 具体操作 | 理由 | 污染引入commit |
+- 特别标注 decisions/ 下每个文件的处理结论
+- 「该保留文件但需删某段」的，精确到段落/行号，给出该删的内容摘要
+- 一份给清理 agent 的执行清单（删哪些文件、改哪些文件的哪些段落、保留哪些不动）
+- 任何你拿不准归属、建议人工确认的项单独列出
+
+不要改任何文件，只产出摸底报告。
+
+---
+
+我的意思是，需要将assets中的docs，恢复成一个彻底干净的模板库。包括decisions01明显也是和本项目强相关的。模板库不应该和任何项目绑定。明白我的意思了吗？
+
+---
+
+对的，按这个思路处理，同时需要更新相关的文档。
+
+---
+
+Task: 为「assets/docs/ 彻底重构成零项目绑定的通用模板库」做全面摸底。彻底度 thorough。**只读侦察，不改任何文件。**
+
+【目标终态（用户已确认）】
+assets/docs/ = 任何项目都能套用的通用文档骨架，零项目绑定：
+- 删：architecture/decisions/0001-pisquad-cli.md、0002-self-update-version-check.md（pisquad 项目 ADR）、conventions/install-state.md（pisquad 工具约定）
+- 清：architecture/overview.md 清成「通用结构指引」（说明系统总览一般该写哪些部分，但不填任何具体项目内容）、architecture/decisions/README.md 清成「（暂无）」+ ADR 格式说明、conventions/README.md（install-state 删后相应调整）
+- 保留：其余纯骨架文件（README.md / current-state.md / glossary.md / architecture/README.md / prds/README.md / tasks/README.md），但要逐一确认它们里面没有混入 pisquad 具体内容
+
+【摸底任务】
+1. **读 assets/docs/ 每个文件当前完整内容**，逐文件标注：哪些段落是「通用骨架」（保留）、哪些是「pisquad 填实内容」（要清/删）。重点逐字记录这几个要改的文件的当前全文：
+   - architecture/overview.md（84 行，含 pisquad 四层架构/Agents·Skills·Extensions 表/关键决策）
+   - architecture/decisions/README.md（列了 0002）
+   - architecture/decisions/0001-pisquad-cli.md（确认整文件是 pisquad ADR）
+   - architecture/decisions/0002-self-update-version-check.md（确认整文件是 hotfix ADR）
+   - conventions/install-state.md（确认整文件是 pisquad state.json 约定）
+   - conventions/README.md（看当前清单段，install-state 删后要怎么调整）
+   - 其余 README.md / current-state.md / glossary.md / architecture/README.md / prds/README.md / tasks/README.md：逐一确认是否纯骨架无 pisquad 内容
+2. **用 git 取 353ce41 初始骨架作「通用模板」参照基线**：`git show 353ce41:assets/docs/architecture/overview.md`、`git show 353ce41:assets/docs/conventions/README.md`、`git show 353ce41:assets/docs/architecture/decisions/README.md` 等关键文件，看最初「将发布物移入 assets/」时的纯骨架长什么样。对比 353ce41 → 当前，区分「通用骨架改进」（该保留）vs「pisquad 内容填实」（要清）。这决定 overview.md 清成什么样——优先回到/接近 353ce41 的通用骨架，而非凭空创作。
+3. **grep docs/ 找所有提到 assets/docs/ 镜像关系的位置**（要一并纠正的错误描述）：
+   - `grep -rn "assets/docs" docs/`
+   - `grep -rn "镜像" docs/`
+   - `grep -rn "消费者模板" docs/`
+   逐个列出：文件:行号 + 当前文案 + 为什么是错误描述（如 current-state.md 那句「assets/docs/ 镜像关键文档（overview / decisions/0001 / conventions/install-state），消费者模板视角与仓库内开发进度解耦」本身就把 pisquad 文档当模板，要改成「assets/docs/ 是通用文档骨架，零项目绑定，不镜像任何具体项目文档」）。覆盖 current-state.md、PRD、ADR 0001/0002、conventions、overview 等所有命中处。
+
+【产出（给 archivist 的执行依据）】
+1. assets/docs/ 逐文件终态处理表：| 文件 | 删/清/保留 | 当前 pisquad 内容摘要 | 清理后该是什么（353ce41 骨架参照或通用结构指引建议） |
+2. architecture/overview.md 的「通用结构指引」建议内容（基于 353ce41 骨架 + 合理的"系统总览该写什么"指引，但不填任何具体项目内容）——给 archivist 一个可直接用的草稿方向
+3. conventions/README.md 在 install-state.md 删除后的调整建议
+4. docs/ 待更新清单：| 文件:行号 | 当前错误文案 | 应改成什么 |
+5. 一份给 archivist 的完整执行清单（assets/docs/ 删哪些/清哪些 + docs/ 改哪些）
+
+不要改任何文件，只产出摸底报告。
+
+---
+
+我要怎么样进入交互式upgrade界面？
+
+---
+
+我现在运行upgrade是这个情况：
+sankabox@7640hs:~/code/EasyCV$ node /home/sankabox/code/PiExperiment/dist/bin.js upgrade
+pisquad upgrade → /home/sankabox/code/EasyCV
+pisquad is already up to date (v0.1.1)
+Backed up 12 files → /home/sankabox/code/EasyCV/.pi/.pisquad/backups/20260809T111605Z-before-upgrade.tar.gz
+codegraph.json already present, keeping user copy
+Channels: core + codegraph + entire
+Modified: 12, added: 0
+Adopted: 12, kept: 20, edited: 0
+Backup: 12 file(s) archived
+  /home/sankabox/code/EasyCV/.pi/.pisquad/backups/20260809T111605Z-before-upgrade.tar.gz
+State: /home/sankabox/code/EasyCV/.pi/.pisquad/state.json
+upgrade complete
+kept 20 user modification(s) — they will reappear in next upgrade's diff
+然后以下是两个排查：
+sankabox@7640hs:~/code/EasyCV$ node -e "console.log(process.stdin.isTTY, process.stdout.isTTY)"    
+true true
+sankabox@7640hs:~/code/EasyCV$ node /home/sankabox/code/PiExperiment/dist/bin.js upgrade --no-self --dry-run
+pisquad upgrade → /home/sankabox/code/EasyCV (dry-run)
+Would adopt: 12 / keep: 20 / edit: 0 / backup: 12 / remove: 0
+modified (12):
+  M .pi/agents/archivist.md
+  M .pi/agents/planner.md
+  M .pi/agents/reviewer.md
+  M .pi/agents/scout.md
+  M .pi/agents/worker.md
+  M .pi/extensions/entire/index.ts
+  M docs/architecture/decisions/README.md
+  M docs/architecture/overview.md
+  M docs/architecture/README.md
+  M docs/conventions/README.md
+  M docs/current-state.md
+  M docs/glossary.md
+added (0):
+removed (20):
+  D docs/architecture/ai-providers.md (will keep)
+  D docs/architecture/decisions/01-mvp-foundation.md (will keep)
+  D docs/architecture/decisions/02-data-model.md (will keep)
+  D docs/architecture/decisions/03-editor.md (will keep)
+  D docs/architecture/decisions/04-ui-primitives.md (will keep)
+  D docs/architecture/decisions/05-operation-queue-stability.md (will keep)
+  D docs/architecture/decisions/06-ai-features.md (will keep)
+  D docs/architecture/decisions/07-client-first.md (will keep)
+  D docs/tasks/0023-phase1/01-vite-scaffold.md (will keep)
+  D docs/tasks/0023-phase1/02-localstore.md (will keep)
+  D docs/tasks/0023-phase1/03-pdf-service.md (will keep)
+  D docs/tasks/0023-phase1/04-hooks.md (will keep)
+  D docs/tasks/0023-phase1/05-router-pages.md (will keep)
+  D docs/tasks/0023-phase1/06a-settings.md (will keep)
+  D docs/tasks/0023-phase1/06b-profiles.md (will keep)
+  D docs/tasks/0023-phase1/06c-sources.md (will keep)
+  D docs/tasks/0023-phase1/06d-home.md (will keep)
+  D docs/tasks/0023-phase1/06e-editor.md (will keep)
+  D docs/tasks/0023-phase1/07-cleanup.md (will keep)
+  D docs/tasks/0023-phase1/README.md (will keep)
+unchanged (14)
+DRY RUN — no changes made
+sankabox@7640hs:~/code/EasyCV$
+
+---
+
+Task: 排查「交互式 pisquad upgrade 在该进交互时没进」的 bug。**只读侦察，不改任何文件。**
+
+【现象】用户在 ~/code/EasyCV 跑 `node dist/bin.js upgrade`（无任何 flag）：
+- process.stdin.isTTY=true, process.stdout.isTTY=true（有 tty）
+- 有交互区 diff：dry-run 显示 modified 含 `.pi/agents/archivist.md`/`planner.md`/`reviewer.md`/`scout.md`/`worker.md` + `docs/architecture/decisions/README.md`/`overview.md`/`README.md`/`conventions/README.md`/`current-state.md`/`glossary.md`（即 .pi/agents 和 docs 这些 interactive=true 的区域有 modified）
+- 但实际 upgrade 直接走了 all-adopt（Adopted 12, kept 20, edited 0），**没弹任何 prompt**
+
+按设计，「无 flag + 有 tty + 交互区有 diff」应该进交互（先问全局策略，再逐个 adopt/keep/edit）。但没进。需要定位根因。
+
+【精确排查点】
+1. **src/main.ts**：upgrade 子命令的 `--interactive` / `--no-interactive` 是怎么定义的（.option 调用原文）？commander 解析后，用户**不传任何 flag**时，传给 upgradeCommand 的 `options.interactive` 实际值是什么（undefined? true? false?）？`interactiveSetByUser` 怎么计算？重点确认：commander 同时定义 `--interactive` 和 `--no-interactive` 时，默认值会不会被 `--no-interactive` 拽成 false。
+
+2. **src/commands/upgrade.ts**：
+   - `isInteractiveEnv` 的精确计算表达式（约 `const isInteractiveEnv = options.yes ? false : (options.interactive !== false) && isInteractive();` 这一行附近）
+   - `isInteractive()` 从哪 import、调用方式
+   - 传给 `resolveUpgradeActions(...)` 的 `interactive` / `interactiveSetByUser` / `isInteractiveEnv` 实际值（在无 flag 场景下推演）
+   - 决策层调用是在 dry-run 分支之前还是之后（确认非 dry-run 路径确实调了决策层）
+
+3. **isInteractive() 函数**：定义在哪个文件（src/lib/env.ts? 还是别处）？完整实现——是只查 `process.stdin.isTTY && process.stdout.isTTY`，还是还查了别的环境变量（如 CI、PISQUAD_NO_TTY 之类）导致在有 tty 时也返回 false？
+
+4. **src/upgrade/decision.ts**：`shouldPrompt(input)` 或等价的「是否进 prompt」判断逻辑的完整代码——什么条件返回 true（进交互）/ false（走 all-adopt）。推演在「interactive=??、isInteractiveEnv=??、有交互区 modified」下返回什么。
+
+5. **根因定位**：综合 1-4，在 EasyCV 场景（无 flag、tty=true、交互区有 11 个 modified）下，到底是哪一环判定为 false 导致没进交互？给出精确的 文件:行号 + 那个判断表达式 + 为什么是 false。
+
+【产出】
+- isInteractiveEnv 计算链路 + 每个操作数的实际值（无 flag 场景）
+- shouldPrompt/进 prompt 判定的完整逻辑 + 在该场景的返回值
+- 根因（精确到 文件:行号 + 表达式 + 为什么 false）
+- 修复方向建议（如：commander 默认值问题 → 改 flag 定义/解析；或 isInteractive 实现问题；或 shouldPrompt 逻辑问题）
+
+不要改任何文件，只产出诊断报告。
+
+---
+
+我的意思是，需要将assets中的docs，恢复成一个彻底干净的模板库。包括decisions01明显也是和本项目强相关的。模板库不应该和任何项目绑定。明白我的意思了吗？
+
+---
+
+Task: 重新摸底 assets/docs/，目标完全不同于上次。**新标准：assets/docs/ 必须是一个彻底干净的、通用的文档模板库，不绑定任何项目（包括 pisquad 自己）。** 只留通用的文档骨架（目录用途说明 + 格式约定 + 空占位），剥离所有 pisquad 项目特定内容。彻底度 thorough。**只读侦察，不改任何文件。**
+
+【新判断标准】
+- **通用模板骨架（保留）**：任何项目都能直接用的中性骨架——各级 README 讲「这个目录放什么 / 文档格式怎么写」、空的看板/词汇表/PRD/任务占位、ADR 的格式说明 + 空清单。
+- **项目特定内容（全部剥离）**：任何和 pisquad（或任何具体项目）绑定的内容——pisquad 的 ADR（0001 CLI 化、0002 self-update）、pisquad 的系统总览、pisquad 的 .pisquad 运行时约定（install-state）、pisquad 的包名/技术栈/分发链路叙事等。消费者项目的 docs/ 是关于他们自己项目的，不该继承 pisquad 的内容。
+
+【核心任务：确认「纯模板基线」】
+assets/docs/ 最初由 commit `353ce41`（refactor: 将发布物移入 assets/）创建。请确认它是否就是理想的「纯通用模板骨架」基线：
+1. 用 `git show 353ce41:assets/docs/<每个文件>` 读出初始版本的每个文件内容，判断 353ce41 的 assets/docs/ 是否纯通用、不绑定 pisquad。重点查：353ce41 的 overview.md / install-state.md / 各级 README 是否已经含 pisquad 特定内容，还是纯空骨架。
+2. 对比 353ce41 → HEAD（31d098a）之间所有 commit 对 assets/docs/ 的改动（353ce41 之后是 6c45ef1、ba4e565、31d098a），逐一确认这些改动**是否全是 pisquad 项目特定内容**（填实 overview/0001/install-state、包名同步、加 0002），有没有任何「通用骨架改进」需要保留。
+3. 结论：353ce41 的 assets/docs/ 是否就是干净的纯模板基线？
+   - 若**是** → 推荐方案：`git checkout 353ce41 -- assets/docs/`（直接恢复到初始骨架，最彻底最干净）。并确认恢复后各级 README 的内部引用是否自洽（不指向不存在的文件）。
+   - 若**否**（353ce41 本身就绑定了 pisquad）→ 给出逐文件的「目标模板内容」清单：哪些文件该删、哪些文件该改成什么中性的骨架内容（给出每个保留文件应有的通用占位文案建议）。
+
+【还要确认】
+4. assets/docs/ 当前 12 个文件（README、current-state、glossary、architecture/README、architecture/overview、architecture/decisions/README、architecture/decisions/0001、architecture/decisions/0002、conventions/README、conventions/install-state、prds/README、tasks/README）逐个按新标准归类：通用骨架保留 / 项目特定剥离。
+5. 若推荐 git checkout 353ce41，确认它不会误伤别的（只动 assets/docs/，且工作树 docs/ 的 task 15 改动不受影响）。
+6. install-state.md 的特殊判断：它描述 pisquad 的 .pisquad/ 运行时产物（state.json/backups）。按新标准这是 pisquad 特定约定，该从消费者模板剥离——但确认 353ce41 时它是否存在、是否本就该是空占位。
+
+【产出】
+- 353ce41 的 assets/docs/ 各文件内容摘要 + 是否纯通用的判定
+- 353ce41 → HEAD 改动的性质（全项目特定 / 有通用改进）
+- 明确推荐：方案A（git checkout 353ce41 -- assets/docs/）还是方案B（手工逐文件清理），附理由
+- 若方案A：确认恢复后的自洽性；若方案B：逐文件目标模板内容清单
+- 任何需人工确认的边界项
+
+只读，不改任何文件。
+
+---
+
+可以，你也验证并修改一下。
