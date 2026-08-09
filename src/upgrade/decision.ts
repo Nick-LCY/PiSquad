@@ -97,8 +97,19 @@ export interface DecisionInput {
   target: string;
   prune: boolean;
   /**
-   * Whether the caller (commander) wants to enter the interactive loop at
-   * all. Combined with `isInteractiveEnv` and `yes` to decide whether any
+   * Narrowed form of the raw `--interactive` / `--no-interactive` flag as
+   * seen by the decision layer. The call site in `upgradeCommand` always
+   * passes `options.interactive === true`, so the three meaningful values
+   * reaching this layer are:
+   *
+   *   - `true`  → user passed `--interactive` (explicit opt-in).
+   *   - `false` → EITHER the user passed `--no-interactive`, OR they
+   *               passed no flag at all. These two cases are NOT
+   *               distinguishable from this field alone; consult
+   *               `interactiveSetByUser` to tell them apart. The
+   *               decision logic in `shouldPrompt` does so explicitly.
+   *
+   * Combined with `isInteractiveEnv` and `yes` to decide whether any
    * prompt is fired.
    */
   interactive: boolean;
@@ -222,22 +233,28 @@ function entriesFromPlan(plan: DiffPlan, includes: PkgInclude[]): PlanEntry[] {
 }
 
 /**
- * Decide whether we should prompt the user at all. Two paths land in
- * "no prompts → all-adopt default":
+ * Decide whether we should prompt the user at all. Three independent
+ * suppressors short-circuit to the "no prompts → all-adopt" default:
  *
- *   1. Non-interactive environment (no tty / CI / PISQUAD_NO_TTY).
- *   2. Caller opted out: `--no-interactive` or `--yes`.
+ *   1. `yes === true` (`--yes`).
+ *   2. `interactiveSetByUser === true && interactive === false` (explicit
+ *      `--no-interactive`).
+ *   3. `isInteractiveEnv === false` (no tty / CI / PISQUAD_NO_TTY).
  *
- * If the user did NOT explicitly opt out (`interactiveSetByUser === false`)
- * AND we have no tty, we still run a non-interactive pass so the command
- * works in CI — but we leave the door open to log a heads-up via the
- * upgrade command's logger.
+ * When `interactiveSetByUser === false`, the caller-narrowed
+ * `interactive === false` means the flag was absent, not that the user opted
+ * out. If a tty is available, that combination proceeds to the interactive
+ * flow; this is the implicit-interactive path required by ADR-0003 §5.
  */
 function shouldPrompt(input: DecisionInput): boolean {
   if (input.yes === true) return false;
-  if (input.interactive === false) return false;
-  if (!input.isInteractiveEnv) return false;
-  return true;
+  // Only an EXPLICIT `--no-interactive` is treated as opt-out. When
+  // the user did not pass the flag, `interactive` arrives as `false`
+  // (the caller narrows via `options.interactive === true`); in that
+  // case we must still consult `isInteractiveEnv` so a real tty
+  // triggers the interactive flow per ADR-0003 §5.
+  if (input.interactiveSetByUser && input.interactive === false) return false;
+  return input.isInteractiveEnv;
 }
 
 /**

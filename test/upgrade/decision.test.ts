@@ -559,4 +559,94 @@ describe("resolveUpgradeActions", () => {
       console.warn = originalWarn;
     }
   });
+
+  it("no flag + tty: implicit interactive mode fires per-file prompts (ADR-0003 §5)", async () => {
+    // Caller (upgrade.ts:261) narrows `options.interactive === true` so
+    // an unpassed flag arrives here as `interactive: false`. Combined
+    // with `interactiveSetByUser: false` and `isInteractiveEnv: true`,
+    // the decision layer MUST still enter the interactive path.
+    const spy = makeSpy({
+      promptStrategy: async () => "per-file",
+      promptFileDecision: async () => "keep",
+    });
+    const result = await resolveUpgradeActions(
+      baseInput({
+        interactive: false,
+        interactiveSetByUser: false,
+        isInteractiveEnv: true,
+      }),
+      spy.deps,
+    );
+    assert.equal(result.mode, "per-file", "tty without flag must trigger interactive flow");
+    assert.equal(spy.promptStrategyCalls, 1, "strategy prompt fired");
+    // 3 modified + 2 added prompted (prune=false, so removed auto-keeps).
+    assert.equal(spy.promptFileDecisionCalls, 5);
+    assert.equal(result.adopt.size, 0);
+    assert.equal(result.keep.size, 6);
+  });
+
+  it("--no-interactive + tty: explicit opt-out still falls back to all-adopt", async () => {
+    // Mirrors the existing "explicit opt-out" test but makes the
+    // contrast with the no-flag case explicit so future readers don't
+    // confuse the two.
+    const spy = makeSpy({
+      promptStrategy: async () => "per-file",
+      promptFileDecision: async () => "keep",
+    });
+    const result = await resolveUpgradeActions(
+      baseInput({
+        interactive: false,
+        interactiveSetByUser: true,
+        isInteractiveEnv: true,
+      }),
+      spy.deps,
+    );
+    assert.equal(result.mode, "all-adopt");
+    assert.equal(spy.promptStrategyCalls, 0, "explicit --no-interactive suppresses strategy prompt");
+    assert.equal(spy.promptFileDecisionCalls, 0);
+    assert.equal(result.adopt.size, 5);
+  });
+
+  it("--interactive without tty: degrades to all-adopt (warning fires upstream)", async () => {
+    // upgrade.ts logs the user-facing warn before calling
+    // resolveUpgradeActions; the decision layer itself just sees
+    // `isInteractiveEnv: false` and must yield batch adopt.
+    const spy = makeSpy({
+      promptStrategy: async () => "per-file",
+      promptFileDecision: async () => "keep",
+    });
+    const result = await resolveUpgradeActions(
+      baseInput({
+        interactive: true,
+        interactiveSetByUser: true,
+        isInteractiveEnv: false,
+      }),
+      spy.deps,
+    );
+    assert.equal(result.mode, "all-adopt");
+    assert.equal(spy.promptStrategyCalls, 0);
+    assert.equal(spy.promptFileDecisionCalls, 0);
+    assert.equal(result.adopt.size, 5);
+    assert.equal(result.keep.size, 1);
+  });
+
+  it("--yes + tty: yes flag wins over interactive intent", async () => {
+    const spy = makeSpy({
+      promptStrategy: async () => "per-file",
+      promptFileDecision: async () => "keep",
+    });
+    const result = await resolveUpgradeActions(
+      baseInput({
+        interactive: true,
+        interactiveSetByUser: true,
+        isInteractiveEnv: true,
+        yes: true,
+      }),
+      spy.deps,
+    );
+    assert.equal(result.mode, "all-adopt");
+    assert.equal(spy.promptStrategyCalls, 0, "--yes must short-circuit before strategy prompt");
+    assert.equal(spy.promptFileDecisionCalls, 0);
+    assert.equal(result.adopt.size, 5);
+  });
 });

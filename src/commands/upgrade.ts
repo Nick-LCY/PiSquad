@@ -258,6 +258,9 @@ export async function upgradeCommand(options: UpgradeOptions): Promise<void> {
         includes,
         target,
         prune: options.prune === true,
+        // Must stay `=== true`: an absent flag (`undefined`) must reach the
+        // decision layer as `false` so shouldPrompt's interactiveSetByUser
+        // guard distinguishes "absent" from explicit `--no-interactive`.
         interactive: options.interactive === true,
         interactiveSetByUser: options.interactiveSetByUser === true,
         isInteractiveEnv,

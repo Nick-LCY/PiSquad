@@ -130,6 +130,7 @@ ADR [[architecture/decisions/0001-pisquad-cli.md]] 第 8 / 9 条确立了「upgr
   - batch adopt 命中 removed + !prune 的情形
   - 语义无害（仅影响 summary 数字，不影响实际行为）
 - **`renderUnifiedDiff` 在 `which("diff") === null` 时回退为 readFileSync 全文并列**：纯 fallback，保证行为不退化；视觉上不如 `diff -u`，仅极端环境触发
+- **首次实现 vs 设计意图的偏差（已纠偏）**：原 `shouldPrompt` 用 `interactive === false` 判断 opt-out，但 `upgradeCommand` 把 `--interactive / --no-interactive` 的 `undefined` 收窄为 `false` 后再传入决策层，导致「未传 flag」和「显式 `--no-interactive`」在该字段上无法区分，落到前者被误判为 opt-out，从而让 §5 「有 tty 且未传 flag → 走交互」的路径在 absent flag 场景下被绕过、`isInteractive()` 成死代码。修复：决策层改用 `interactiveSetByUser` 区分「显式 `--no-interactive`」与「未传 flag」，未传 flag 时回退到 `isInteractiveEnv`（tty）判定；`upgradeCommand` 的 `=== true` 收窄保留并加承重墙注释。语义与 §5 完全对齐。
 
 ## 任务
 
