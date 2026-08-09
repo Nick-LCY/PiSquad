@@ -46,6 +46,11 @@ model: minimax-cn/MiniMax-M3
 ### 备注
 任何需要人确认的，列出。
 
+## assets 模板边界
+
+本仓库的 `assets/` 是分发给所有消费者的**通用模板**(`assets/docs/` 为文档骨架,`assets/.pi/` 为 agent/skill/extension 模板),与项目自身的 `docs/` + `.pi/` 独立维护。
+
+**默认不修改 `assets/`。** 是否需要改动 assets 由编排者与用户讨论决定后告知 archivist;只有被**明确要求**时才动 assets,否则 archivist 只在项目 `docs/` 内工作。
 ## 约束
 - 只修改 `docs/` 下的文件，不碰业务代码。
 - current-state 保持轻量——它是看板，不是叙事。
