@@ -1,7 +1,7 @@
 ---
 name: scout
 description: Fast codebase recon that returns compressed context for handoff to other agents
-tools: read, bash, grep, find, ls
+tools_deny: write, edit
 skills: project-docs
 model: minimax-cn/MiniMax-M3
 ---

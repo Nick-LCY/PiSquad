@@ -12,6 +12,7 @@ export interface AgentConfig {
 	name: string;
 	description: string;
 	tools?: string[];
+	toolsDeny?: string[]; // 新增：黑名单工具列表
 	model?: string;
 	skills?: string[];
 	systemPrompt: string;
@@ -61,6 +62,11 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			.map((t: string) => t.trim())
 			.filter(Boolean);
 
+		const toolsDeny = frontmatter.tools_deny
+			?.split(",")
+			.map((t: string) => t.trim())
+			.filter(Boolean);
+
 		const skills = frontmatter.skills
 			?.split(",")
 			.map((s: string) => s.trim())
@@ -70,6 +76,7 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
+			toolsDeny: toolsDeny && toolsDeny.length > 0 ? toolsDeny : undefined,
 			model: frontmatter.model,
 			skills: skills && skills.length > 0 ? skills : undefined,
 			systemPrompt: body,
