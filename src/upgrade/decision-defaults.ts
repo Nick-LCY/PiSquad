@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { select, editor, Separator } from "@inquirer/prompts";
+import pc from "picocolors";
 import { execCapture as defaultExecCapture, which as defaultWhich } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import type {
@@ -71,17 +72,17 @@ async function defaultPromptStrategy(): Promise<StrategyMode> {
       {
         name: "Adopt new version for every file (recommended)",
         value: "all-adopt",
-        description: "覆盖所有交互区文件（0.1.1 行为）",
+        description: "Overwrite all interactive files (0.1.1 behaviour)",
       },
       {
         name: "Keep my current files (skip all updates)",
         value: "all-keep",
-        description: "保留本地修改，跳过本次新内容",
+        description: "Keep local changes, skip new content this run",
       },
       {
         name: "Decide per file",
         value: "per-file",
-        description: "逐文件查看 diff 后选择",
+        description: "Review the diff and choose per file",
       },
     ],
   });
@@ -124,17 +125,17 @@ async function defaultPromptFileDecision(
           {
             name: "Adopt new version",
             value: "adopt",
-            description: "用新版本覆盖本地",
+            description: "Overwrite local with the new version",
           },
           {
             name: "Keep my version",
             value: "keep",
-            description: "保守保护本地修改",
+            description: "Keep your local version (safe)",
           },
           {
             name: "Edit / merge manually in $EDITOR",
             value: "edit",
-            description: "在 $EDITOR 中合并新版本到本地",
+            description: "Merge the new version into local via $EDITOR",
           },
         ]
       : kind === "added"
@@ -142,24 +143,24 @@ async function defaultPromptFileDecision(
             {
               name: "Adopt new file",
               value: "adopt",
-              description: "写入新文件",
+              description: "Write the new file",
             },
             {
               name: "Skip (don't add this file)",
               value: "keep",
-              description: "不添加此文件",
+              description: "Do not add this file",
             },
           ]
         : [
             {
               name: "Delete (--prune)",
               value: "adopt",
-              description: "删除该文件（仅 --prune 时生效）",
+              description: "Delete this file (only effective with --prune)",
             },
             {
               name: "Keep my file",
               value: "keep",
-              description: "保留本地副本",
+              description: "Keep your local copy",
             },
           ];
 
@@ -169,12 +170,12 @@ async function defaultPromptFileDecision(
           {
             name: `Adopt all remaining (${remaining})`,
             value: "__adopt-all",
-            description: "对剩余 N 个文件全部采用新版本",
+            description: `Adopt the new version for all ${remaining} remaining files`,
           },
           {
             name: `Keep all remaining (${remaining})`,
             value: "__keep-all",
-            description: "对剩余 N 个文件全部保留本地",
+            description: `Keep local for all ${remaining} remaining files`,
           },
         ]
       : [];
@@ -229,7 +230,7 @@ async function defaultRenderUnifiedDiff(
       logger.info("(files are identical)");
       return "";
     }
-    for (const line of stdout.split(/\r?\n/)) logger.info(line);
+    for (const line of stdout.split(/\r?\n/)) printDiffLine(line);
     if (result.exitCode > 1) {
       // diff exits 1 when files differ — expected. > 1 means actual error.
       logger.warn(`diff exited ${result.exitCode}: ${result.stderr.trim()}`);
@@ -240,8 +241,35 @@ async function defaultRenderUnifiedDiff(
   logger.info("(diff CLI not found; showing new version in full)");
   logger.info("New version from assets:");
   const newContent = readFileSync(toAbs, "utf-8");
-  for (const line of newContent.split(/\r?\n/)) logger.info(line);
+  for (const line of newContent.split(/\r?\n/)) printDiffLine(line);
   return newContent;
+}
+
+/**
+ * Print a single line from a unified diff with git-style coloring.
+ *
+ * `diff -u` lines start with `+++ `/`--- ` (file headers), `@@` (hunk
+ * header), `+` (added), `-` (removed), or a single space / nothing
+ * (context). We dispatch by prefix — the file-header checks must run
+ * first so `+++ b` does not also match the `+` rule. Output goes
+ * straight to stdout via `console.log` so we do not double-wrap lines
+ * in `logger.info`'s cyan (which would mutate git's color scheme).
+ *
+ * Non-diff lines (e.g. the readFileSync fallback body) have no
+ * recognised prefix and pass through uncoloured.
+ */
+function printDiffLine(line: string): void {
+  if (line.startsWith("+++ ") || line.startsWith("--- ")) {
+    console.log(pc.dim(line));
+  } else if (line.startsWith("@@")) {
+    console.log(pc.cyan(line));
+  } else if (line.startsWith("+")) {
+    console.log(pc.green(line));
+  } else if (line.startsWith("-")) {
+    console.log(pc.red(line));
+  } else {
+    console.log(line);
+  }
 }
 
 export { defaultRenderUnifiedDiff };
@@ -296,7 +324,8 @@ async function defaultRenderUnifiedDiffForEntry(
       );
       return "";
     }
-    for (const line of content.split(/\r?\n/)) logger.info(line);
+    // Every line is an addition — render in green to match git's colour.
+    for (const line of content.split(/\r?\n/)) console.log(pc.green(line));
     return content;
   }
   // kind === "removed"
@@ -305,7 +334,8 @@ async function defaultRenderUnifiedDiffForEntry(
   try {
     const content = readFileSync(oldAbs, "utf-8");
     logger.info("Current content (would be removed when --prune is in effect):");
-    for (const line of content.split(/\r?\n/)) logger.info(line);
+    // Whole-file removal preview — red mirrors git's `diff --old-only` view.
+    for (const line of content.split(/\r?\n/)) console.log(pc.red(line));
     return content;
   } catch {
     logger.info("(this file no longer exists on disk either)");

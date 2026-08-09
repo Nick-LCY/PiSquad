@@ -4,6 +4,7 @@
 
 ## 内容
 - [[conventions/install-state.md]] — `<target>/.pi/.pisquad/` 运行时产物约定（`state.json` schema、`backups/` 命名规则与保留策略、与 git 协作）
+- [[conventions/tui-language.md]] — TUI 面向终端用户的文案一律英文（inquirer message/name/description/short、logger、console、spinner、help 等）
 
 ## 文档链接约定
 
