@@ -1,0 +1,64 @@
+publish成功了，我现在可以怎么测试？
+
+---
+
+所以，总结一下现在已有的功能
+
+---
+
+我对于upgrade这个功能有些不确定，我刚才在一个已有pisquad的仓库里面测试了pisquad upgrade，结果一直出现下面这段话：
+sankabox@7640hs:~/code/EasyCV$ pisquad upgrade
+pisquad upgrade → /home/sankabox/code/EasyCV
+Updating pisquad via npm install -g (timeout 120s)
+CLI self-updated to latest. Re-run `pisquad upgrade` to sync this project with the new version.
+sankabox@7640hs:~/code/EasyCV$ pisquad upgrade
+pisquad upgrade → /home/sankabox/code/EasyCV
+Updating pisquad via npm install -g (timeout 120s)
+CLI self-updated to latest. Re-run `pisquad upgrade` to sync this project with the new version.
+sankabox@7640hs:~/code/EasyCV$
+
+---
+
+Task: ## 任务：修复 upgrade 的 self-update 死循环 bug
+
+### Bug
+`pisquad upgrade` 在全局 pisquad 已是最新版时陷入死循环：每次都跑 `npm i -g @nicklin/pisquad@latest`（即使已是最新也"成功"）→ 返回 `updated:true` → 提示"Re-run"→ 用户重跑 → 又 self-update → 循环。
+
+### 根因
+`src/upgrade/self.ts` 的 `selfUpdate()` 确认全局安装后，**无条件跑 `npm i -g` 并返回 `updated:true`**，没有比较当前版本与 registry 最新版本。
+
+### 修复
+先 `read src/upgrade/self.ts` 和 `src/commands/upgrade.ts` 确认现状。
+
+在 `selfUpdate()` 里、**确认是全局安装之后、跑 `npm i -g` 之前**，加版本比较：
+
+1. 新增 `getLatestVersion(execCapture): Promise<string | null>`：跑 `npm view @nicklin/pisquad version`，返回 trim 后的版本字符串；失败/exitCode 非 0 → 返回 `null`
+2. 拿当前版本：`import { readCliVersion } from "../lib/version.js"`，`const currentVersion = readCliVersion()`
+3. 三分支：
+   - `latestVersion === null`（npm view 失败/离线）→ `logger.warn("Could not check latest pisquad version on registry, skipping self-update")` → 返回 `{ updated: false, reason: "npm view failed" }`
+   - `latestVersion === currentVersion`（已是最新）→ `logger.info(\`pisquad is already up to date (v${currentVersion})\`)` → 返回 `{ updated: false, reason: "already latest" }`
+   - `latestVersion !== currentVersion`（有新版）→ `logger.info(\`Updating pisquad v${currentVersion} → v${latestVersion}\`)` → 跑现有的 `npm i -g` 逻辑 → 返回 `{ updated: true }`
+4. `upgrade.ts` **不需要改逻辑**（它已经是 `if (selfResult.updated) { 提示重跑; return; }`，else 继续 project 同步）——selfUpdate 返回 false 时自然继续同步
+
+### 验证（通过才 commit）
+- `npx tsc --noEmit` + `npm run build` exit 0
+- 用 tsx + `deps` 测试 seam（selfUpdate 支持 `deps?: { which, execCapture, runNpmInstallGlobal }`）mock 三分支：
+  - mock execCapture 让 `npm view` 返回当前版本（== readCliVersion）→ selfUpdate 返回 `{updated:false}`，**不**调用 runNpmInstallGlobal
+  - mock execCapture 让 `npm view` 返回更高版本 → selfUpdate 返回 `{updated:true}`，**调用了** runNpmInstallGlobal（用 stub）
+  - mock execCapture 让 `npm view` 失败（exitCode 非 0）→ selfUpdate 返回 `{updated:false, reason:"npm view failed"}`，不调用 runNpmInstallGlobal
+- 三个分支都验证 reason/logger 行为符合预期
+
+### 版本 bump（bug fix 发版）
+- `package.json` 的 `version`: `0.1.0` → `0.1.1`
+- `assets/.pi/assets-version.txt`：**保持 `0.1.0` 不变**（assets 内容没改，只修了 CLI 代码——体现双版本分离）
+
+### commit
+`fix(cli): compare versions before self-update to avoid re-run loop`
+
+只改 `src/upgrade/self.ts` + `package.json`。不要碰其它文件。
+
+### 报告
+- self.ts 改了什么（加 getLatestVersion + 三分支）
+- tsx 三分支 mock 测试的实际输出（确认已是最新→false 不更新；有新版→true 更新；npm view 失败→false 跳过）
+- package.json version → 0.1.1，assets-version.txt 仍 0.1.0
+- commit hash
