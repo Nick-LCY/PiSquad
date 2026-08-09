@@ -1,0 +1,38 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "e6e50f46fd98",
+  "session_id": "019fe691-ba2c-7d6d-8b1f-fcc2acd0bf6b",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-09T14:45:56.869808986Z",
+  "branch": "main",
+  "checkpoints_count": 6,
+  "files_touched": [],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "4951246ff8db",
+  "checkpoint_transcript_start": 75,
+  "transcript_lines_at_start": 75,
+  "compact_transcript_start": 36,
+  "token_usage": {
+    "input_tokens": 159477,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 649088,
+    "output_tokens": 14242,
+    "api_call_count": 10
+  },
+  "session_metrics": {
+    "turn_count": 10
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 5,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".pi/agents/archivist.md": 5
+      }
+    }
+  ]
+}

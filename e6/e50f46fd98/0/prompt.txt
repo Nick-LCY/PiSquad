@@ -1,0 +1,32 @@
+可以了，没有什么问题了。另外我准备更新一下项目自身（不是assets中）的一些配置。查看commit记录，你应该能看到之前有一个commit中清理了assets的docs，因为assets的docs没有保持模板，而是混入了本仓库（pisquad）的内容。我需要你更新一下archivist的描述，特别和它说明在什么情况下应该改动assets，什么情况下不应该。
+
+---
+
+不需要补充历史教训，convention模板那部分也不需要。然后判断这件事情不交给archivist来判断，而是由编排者和用户讨论得出之后，告知archivist。也就是说，除非明确要求需要修改assets，否则不应该修改assets。
+
+---
+
+Task: 在项目自身的 `.pi/agents/archivist.md`(注意:不是 `assets/.pi/agents/archivist.md` 模板版)新增一个小节。
+
+**位置**:插在现有「## 约束」小节**之前**(它是一条重要的行为边界,放约束前面最自然)。
+
+**逐字写入以下内容**(含标题与正文):
+
+```markdown
+## assets 模板边界
+
+本仓库的 `assets/` 是分发给所有消费者的**通用模板**(`assets/docs/` 为文档骨架,`assets/.pi/` 为 agent/skill/extension 模板),与项目自身的 `docs/` + `.pi/` 独立维护。
+
+**默认不修改 `assets/`。** 是否需要改动 assets 由编排者与用户讨论决定后告知 archivist;只有被**明确要求**时才动 assets,否则 archivist 只在项目 `docs/` 内工作。
+```
+
+**约束**:
+- 只改 `.pi/agents/archivist.md` 这一个文件。
+- **不要**改 `assets/.pi/agents/archivist.md`(模板版,默认不改 assets)。
+- 不要改动该文件的其他内容(职责 / 链接规范 / 输入 / 输出格式 / 约束 等保持原样)。
+
+输出 Completed / Files Changed。
+
+---
+
+继续
