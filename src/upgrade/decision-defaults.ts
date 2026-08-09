@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expand, editor } from "@inquirer/prompts";
+import { select, editor, Separator } from "@inquirer/prompts";
 import { execCapture as defaultExecCapture, which as defaultWhich } from "../lib/env.js";
 import { logger } from "../lib/logger.js";
 import type {
@@ -14,7 +14,7 @@ import type {
 /**
  * Default `DecisionDeps` for production use.
  *
- * Wires the real @inquirer/prompts `expand` and `editor` prompts plus the
+ * Wires the real @inquirer/prompts `select` (arrow-navigation) and `editor` prompts plus the
  * `diff` CLI (with a read-and-print fallback when `diff` is not installed)
  * into the dependency-injected decision layer. Tests bypass this module
  * entirely and construct fake `DecisionDeps` to drive every branch.
@@ -57,20 +57,32 @@ export interface BuildDefaultDecisionDepsOptions {
 /**
  * Top-level strategy picker: batch-adopt (default), batch-keep, or per-file.
  *
- * Uses the @inquirer/prompts `expand` widget so the user picks a single
- * letter rather than navigating an arrow list. The legacy `default` key
- * (`1`) makes "Adopt new" the highlighted choice when the user just hits
- * enter — matching the documented behaviour for the non-interactive
- * fallback.
+ * Uses the @inquirer/prompts `select` widget so the user navigates with
+ * arrow keys instead of typing a single letter. `select` highlights the
+ * default choice by matching `default` against a choice's `value`, so the
+ * `default` string must be one of the `value`s below — not a letter key
+ * or an index.
  */
 async function defaultPromptStrategy(): Promise<StrategyMode> {
-  const result = await expand({
+  const result = await select({
     message: "Choose upgrade strategy for interactive files",
-    default: "1",
+    default: "all-adopt",
     choices: [
-      { key: "1", name: "Adopt new version for every file (recommended)", value: "all-adopt" },
-      { key: "2", name: "Keep my current files (skip all updates)", value: "all-keep" },
-      { key: "3", name: "Decide per file", value: "per-file" },
+      {
+        name: "Adopt new version for every file (recommended)",
+        value: "all-adopt",
+        description: "覆盖所有交互区文件（0.1.1 行为）",
+      },
+      {
+        name: "Keep my current files (skip all updates)",
+        value: "all-keep",
+        description: "保留本地修改，跳过本次新内容",
+      },
+      {
+        name: "Decide per file",
+        value: "per-file",
+        description: "逐文件查看 diff 后选择",
+      },
     ],
   });
   if (result === "all-adopt" || result === "all-keep" || result === "per-file") return result;
@@ -83,13 +95,19 @@ async function defaultPromptStrategy(): Promise<StrategyMode> {
  * mental model is different for an existing-but-modified file vs. a brand
  * new file vs. one slated for deletion under --prune.
  *
- * When `remaining > 0` we append two batch shortcuts:
+ * When `remaining > 0` we append two batch entries separated from the
+ * base choices by a `Separator`:
  *
- *   - `r` (Adopt all remaining N) — collapse every subsequent file to adopt.
- *   - `t` (Keep all remaining N) — collapse every subsequent file to keep.
+ *   - "Adopt all remaining (N)" — collapse every subsequent file to adopt.
+ *   - "Keep all remaining (N)" — collapse every subsequent file to keep.
  *
  * The sentinel values `__adopt-all` / `__keep-all` are recognised by
  * `resolveUpgradeActions` to fan the decision out and exit the per-file loop.
+ *
+ * `select` highlights the default choice by matching `default` against a
+ * choice's `value`; descriptions carry the contextual hint. We no longer
+ * suffix `(default)` onto the choice name — the renderer renders the
+ * highlight directly.
  */
 type FileDecisionAnswer = "adopt" | "keep" | "edit" | "__adopt-all" | "__keep-all";
 
@@ -99,50 +117,75 @@ async function defaultPromptFileDecision(
   kind: FileKind,
 ): Promise<FileDecisionAnswer> {
   const header = describeEntry(entry);
-  // Track which key is the default so we can label it in the choice name.
-  // inquirer's `expand` highlights the default key in the prompt UI, but
-  // the choice name itself stays plain text — appending "(default)" makes
-  // it explicit in non-interactive contexts (CI logs, screen readers, etc.).
-  const defaultKey: "a" | "k" | "e" = kind === "modified" ? "k" : "a";
-  const label = (key: "a" | "k" | "e", name: string): string =>
-    key === defaultKey ? `${name} (default)` : name;
-  const baseChoices: Array<{ key: "a" | "k" | "e"; name: string; value: FileDecisionAnswer }> =
+  const defaultValue: FileDecisionAnswer = kind === "modified" ? "keep" : "adopt";
+  const baseChoices: Array<{ name: string; value: FileDecisionAnswer; description?: string }> =
     kind === "modified"
       ? [
-          { key: "a", name: label("a", "Adopt new version"), value: "adopt" },
-          { key: "k", name: label("k", "Keep my version"), value: "keep" },
-          { key: "e", name: label("e", "Edit / merge manually in $EDITOR"), value: "edit" },
+          {
+            name: "Adopt new version",
+            value: "adopt",
+            description: "用新版本覆盖本地",
+          },
+          {
+            name: "Keep my version",
+            value: "keep",
+            description: "保守保护本地修改",
+          },
+          {
+            name: "Edit / merge manually in $EDITOR",
+            value: "edit",
+            description: "在 $EDITOR 中合并新版本到本地",
+          },
         ]
       : kind === "added"
         ? [
-            { key: "a", name: label("a", "Adopt new file"), value: "adopt" },
-            { key: "k", name: label("k", "Skip (don't add this file)"), value: "keep" },
+            {
+              name: "Adopt new file",
+              value: "adopt",
+              description: "写入新文件",
+            },
+            {
+              name: "Skip (don't add this file)",
+              value: "keep",
+              description: "不添加此文件",
+            },
           ]
         : [
-            { key: "a", name: label("a", "Delete (--prune)"), value: "adopt" },
-            { key: "k", name: label("k", "Keep my file"), value: "keep" },
+            {
+              name: "Delete (--prune)",
+              value: "adopt",
+              description: "删除该文件（仅 --prune 时生效）",
+            },
+            {
+              name: "Keep my file",
+              value: "keep",
+              description: "保留本地副本",
+            },
           ];
 
-  const batchChoices: Array<{ key: "r" | "t"; name: string; value: FileDecisionAnswer }> =
+  const batchChoices: Array<{ name: string; value: FileDecisionAnswer; description: string }> =
     remaining > 0
       ? [
           {
-            key: "r",
             name: `Adopt all remaining (${remaining})`,
             value: "__adopt-all",
+            description: "对剩余 N 个文件全部采用新版本",
           },
           {
-            key: "t",
             name: `Keep all remaining (${remaining})`,
             value: "__keep-all",
+            description: "对剩余 N 个文件全部保留本地",
           },
         ]
       : [];
 
-  const answer = await expand<FileDecisionAnswer>({
+  const answer = await select<FileDecisionAnswer>({
     message: header,
-    default: defaultKey,
-    choices: [...baseChoices, ...batchChoices],
+    default: defaultValue,
+    choices:
+      batchChoices.length > 0
+        ? [...baseChoices, new Separator(), ...batchChoices]
+        : baseChoices,
   });
   if (answer === "__adopt-all" || answer === "__keep-all") return answer;
   if (answer === "adopt" || answer === "keep" || answer === "edit") return answer;

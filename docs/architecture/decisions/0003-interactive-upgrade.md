@@ -31,32 +31,32 @@ ADR [[architecture/decisions/0001-pisquad-cli.md]] 第 8 / 9 条确立了「upgr
   - **不直接调** `@inquirer/prompts` / `spawn` / `fs`；所有外部能力（prompt / editor / diff）通过 `DecisionDeps` 注入
   - 复用 [[architecture/decisions/0002-self-update-version-check.md]] 的「`SelfUpdateDeps` 桩模式」做可测性
 - 新增 `src/upgrade/decision-defaults.ts`：`buildDefaultDecisionDeps()`
-  - 接入 `@inquirer/prompts` 的 `expand`（策略选择 + 单文件 adopt/keep/edit + 批量快捷键）
+  - 接入 `@inquirer/prompts` 的 `select`（策略选择 + 单文件 adopt/keep/edit + 批量分组，通过 Separator 与基础选项分隔）
   - 接入 `editor`（编辑旧文件，`$EDITOR` → `$VISUAL` → `vi` 兜底）
   - 接入 `diff -u` 展示新旧差异；`which("diff") === null` 时回退到 `readFileSync` 全文对照
 - 决策层与执行（backup / copy / prune）解耦：执行阶段按 decision 行动，而非按 diff 全量
 
 ### 3. 交互入口三档（全局策略）
 
-- **`[1] 全部采用新`**（默认）：所有交互区文件按新版本覆盖；管理区照旧
-- **`[2] 全部保留旧`**：所有交互区文件保留本地版本；管理区照旧
-- **`[3] 逐个决定`**：每个交互区文件**先展示 unified diff 再选择**
+- **`Adopt new (default)`**（默认）：所有交互区文件按新版本覆盖；管理区照旧
+- **`Keep mine`**：所有交互区文件保留本地版本；管理区照旧
+- **`Per-file`**：每个交互区文件**先展示 unified diff 再选择**
 
 每文件选项：
 
 | 文件类型 | 选项 |
 |---|---|
-| modified | `[A]dopt`（采用新） / `[K]eep`（保留旧，默认） / `[E]dit`（编辑旧文件并展示新版本参照） |
-| added | `[A]dopt` / `[K]eep`（不要） |
-| removed | 仅 `--prune` 时进 prompt：`[A]dopt`（删除） / `[K]eep`（保留）；非 prune 时**自动 keep，不打扰** |
+| modified | `Adopt`（采用新） / `Keep`（保留旧，默认） / `Edit`（编辑旧文件并展示新版本参照） |
+| added | `Adopt` / `Keep`（不要） |
+| removed | 仅 `--prune` 时进 prompt：`Adopt`（删除） / `Keep`（保留）；非 prune 时**自动 keep，不打扰** |
 
-> modified 单文件默认 key=keep（保守保护用户本地修改），prompt 文案标注 `(default)`。
+> modified 单文件默认高亮 keep（保守保护用户本地修改）。`select` 通过将 `default` 与 `choice.value` 匹配（`@inquirer/select` 的 `findIndex((item) => item.value === config.default)`）定位高亮项，因此决策层传 `defaultValue`（即某个 choice 的 `value`）而非索引；renderer 据此渲染，无需在 choice name 末尾追加 `(default)` 后缀。
 
-逐个模式下支持**批量快捷键**：「剩余全部采用」「剩余全部保留」。
+逐个模式下支持**批量分组**：在 select 选项列表中以 `Separator` 分隔，cursor 可直接跳到批量组（`Adopt all remaining (N)` / `Keep all remaining (N)`），无需通过单字符快捷键命中。
 
 ### 4. merge 走 `$EDITOR` 方案 A
 
-用户选 `[E]dit` → 用 `$EDITOR`（fallback `$VISUAL` → `vi`）打开目标旧文件并展示新版本参照：
+用户选 `Edit`（choice value `"edit"`）→ 用 `$EDITOR`（fallback `$VISUAL` → `vi`）打开目标旧文件并展示新版本参照：
 
 - 编辑返回空串 → keep 兜底（保护用户不会因误清空文件丢失内容）
 - 编辑后内容 hash 与新版本一致 → 标记 `matchesTheirs = merged`，下游按「采用新」处理（避免再次重复 prompt）
@@ -131,6 +131,7 @@ ADR [[architecture/decisions/0001-pisquad-cli.md]] 第 8 / 9 条确立了「upgr
   - 语义无害（仅影响 summary 数字，不影响实际行为）
 - **`renderUnifiedDiff` 在 `which("diff") === null` 时回退为 readFileSync 全文并列**：纯 fallback，保证行为不退化；视觉上不如 `diff -u`，仅极端环境触发
 - **首次实现 vs 设计意图的偏差（已纠偏）**：原 `shouldPrompt` 用 `interactive === false` 判断 opt-out，但 `upgradeCommand` 把 `--interactive / --no-interactive` 的 `undefined` 收窄为 `false` 后再传入决策层，导致「未传 flag」和「显式 `--no-interactive`」在该字段上无法区分，落到前者被误判为 opt-out，从而让 §5 「有 tty 且未传 flag → 走交互」的路径在 absent flag 场景下被绕过、`isInteractive()` 成死代码。修复：决策层改用 `interactiveSetByUser` 区分「显式 `--no-interactive`」与「未传 flag」，未传 flag 时回退到 `isInteractiveEnv`（tty）判定；`upgradeCommand` 的 `=== true` 收窄保留并加承重墙注释。语义与 §5 完全对齐。
+- **实现层 UI 迁移：`expand` → `select`**：UX 改进把决策层以外仅 `src/upgrade/decision-defaults.ts` 受影响；adapter 从 `@inquirer/prompts` 的 `expand`（字母编码 `[1]/[2]/[3]`、`[A]/[K]/[E]`、批量快捷键 `r`/`t`）迁移到 `select`（箭头键 + Enter），与 `install` 的箭头式 UX 对齐。批量功能从单字符快捷键改为 `Separator` 分组的列表选项（`Adopt all remaining (N)` / `Keep all remaining (N)`）；哨兵值 `__adopt-all` / `__keep-all` 与决策层契约（`src/upgrade/decision.ts`）不变。`select` 通过 `default` 与 `choice.value` 匹配定位高亮项（见 §3），`decision-defaults.ts` 的 `defaultValue` 三元已对齐每个 `kind` 的 `baseChoices`；未来若新增 `FileKind` 或调整 choice 形状需同步 `defaultValue`，否则会静默 fallback 到首项。测试零改动（决策层 contract 不变），42 测试全过、`tsup` 构建成功。
 
 ## 任务
 

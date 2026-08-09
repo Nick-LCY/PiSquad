@@ -65,6 +65,7 @@ pi-squad 已基本成型、可用：多 Agent 协作、文档驱动、会话可�
 
 ## 最近变更
 
+- 交互式 upgrade 选 UI 从 `expand` 迁移到 `select`（箭头键 + Enter）：与 `install` 的箭头式 UX 对齐；批量功能从 r/t 快捷键改为 `Separator` 分组的列表选项（`Adopt all remaining (N)` / `Keep all remaining (N)`）；哨兵值 `__adopt-all` / `__keep-all` 与决策层契约不变；仅影响 `src/upgrade/decision-defaults.ts`，测试零改动、42 测试全过、tsup 构建成功。背景与契约见 ADR [[architecture/decisions/0003-interactive-upgrade.md]]
 - 修复 upgrade 交互式判定 bug：`shouldPrompt` 此前用 `interactive === false` 判断 opt-out，与 `upgradeCommand` 把 `options.interactive === true` 收窄传入后，未传 flag（absent）会被误判为 opt-out，导致 absent flag + tty 走 all-adopt 而非 per-file，违背 ADR [[architecture/decisions/0003-interactive-upgrade.md]] §5「有 tty 且未传 flag → 走交互」。修复后 `shouldPrompt` 复用 `interactiveSetByUser` 区分「显式 `--no-interactive`」与「未传 flag」，未传 flag 时回退到 `isInteractiveEnv`（tty）判定；42 测试全过、新增 4 个覆盖 §5 矩阵，dist 重建
 - 交互式 upgrade 实现完成（task 15）：管理区/交互区按目录白名单拆分（`docs/**` + `.pi/agents/**` + `.pi/skills/**` vs `.pi/extensions/**`）；决策层独立、纯协调、deps 注入；`$EDITOR` 方案 A 合并（不做三方 merge base）；无 tty / CI / `curl | bash` 退化为 all-adopt+备份；38 项测试全过、tsup 构建成功。决策与影响见 ADR [[architecture/decisions/0003-interactive-upgrade.md]]
 - 发布 `@nicklin/pisquad@0.1.1`：修复 upgrade 的 self-update 死循环（0.1.0 在全局已是最新时无限 `npm i -g` 并提示重跑）；改为 self-update 前 `npm view` 比版本，已是最新则跳过、继续 project 同步
