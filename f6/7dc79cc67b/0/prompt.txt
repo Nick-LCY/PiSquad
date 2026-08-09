@@ -1,0 +1,26 @@
+Task: 侦察目标:为「把 upgrade 交互式选择从 expand(字母编码)改成 select(箭头选择,像 install)」这个需求摸清现状。
+
+## 背景
+用户反馈:upgrade 的交互式选择目前是输入字母编码(1/2/3/h),不直观,希望改成像 install 时一样的 select 框(箭头上下选择)。
+
+ADR-0003 §3(docs/architecture/decisions/0003-interactive-upgrade.md)原设计用 @inquirer/prompts 的 expand,正是为了支持单键快捷键 + 批量快捷键(「剩余全部采用」/「剩余全部保留」)。要评估改成 select 的影响。
+
+## 侦察范围(只读,不改任何文件)
+1. **install 命令的交互实现**(作为用户期望的基准):
+   - `src/commands/install.ts` 里 install 用了什么交互 prompt?(@inquirer/prompts 的 select / checkbox / 别的?)
+   - 若用了封装 helper(如 `src/lib/ui.ts`),给出 helper 实现。
+   - 用户说的「select 框」具体形式(箭头选择?多选?)。
+2. **upgrade 当前交互实现**(`src/upgrade/decision-defaults.ts`):
+   - `defaultPromptStrategy`(全局策略选择)用了什么 prompt?选项结构(key + label + value)、默认值。
+   - `defaultPromptFileDecision`(单文件 adopt/keep/edit)用了什么 prompt?选项结构、key、默认。
+   - 字母编码(1/2/3/h)具体出现在哪几个 prompt?
+   - ADR-0003 §3 的「批量快捷键」(剩余全部采用 / 剩余全部保留)在代码里如何实现?返回什么值让决策层识别「批量」?
+3. **依赖**:`package.json` 里 @inquirer/prompts 版本,select / expand / checkbox / separator 是否都可用。
+4. **相关测试**:`test/upgrade/` 下是否有针对 defaultPromptStrategy / defaultPromptFileDecision 的测试,断言了哪些行为(key、返回值、批量语义)。
+
+## 产出(结构化)
+1. install 交互形式:文件:行号 + 代码片段 + prompt 类型。
+2. upgrade 各 prompt 现状清单:每个 prompt(策略选择 / 单文件决策 / 其他)→ prompt 类型 / 选项(key+label+value)/ 默认 / 批量快捷键处理方式。
+3. 「expand → select」技术映射:每个 expand 选项如何对应 select 项;批量快捷键在 select 下如何保留(或需要改用什么机制)。
+4. 影响面:要改的文件、要改的测试、是否触及 ADR-0003 §3 的设计假设。
+5. 风险点:select 不支持单字母快捷键,批量功能(剩余全部)如何在箭头选择里呈现。

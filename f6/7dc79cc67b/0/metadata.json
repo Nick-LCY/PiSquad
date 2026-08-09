@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "f67dc79cc67b",
+  "session_id": "019fe691-ba2c-7d6d-8b1f-fcc2acd0bf6b",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-09T13:32:07.254332371Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "docs/architecture/decisions/0003-interactive-upgrade.md",
+    "docs/current-state.md",
+    "src/upgrade/decision-defaults.ts"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "238d2b2570ce",
+  "checkpoint_transcript_start": 41,
+  "transcript_lines_at_start": 41,
+  "compact_transcript_start": 19,
+  "token_usage": {
+    "input_tokens": 22263,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 268608,
+    "output_tokens": 10541,
+    "api_call_count": 4
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-09T13:32:07.147404947Z",
+    "agent_lines": 92,
+    "agent_removed": 47,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 92,
+    "total_lines_changed": 139,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

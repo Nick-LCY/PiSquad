@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "f67dc79cc67b",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "docs/architecture/decisions/0003-interactive-upgrade.md",
+    "docs/current-state.md",
+    "src/upgrade/decision-defaults.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f6/7dc79cc67b/0/metadata.json",
+      "transcript": "/f6/7dc79cc67b/0/full.jsonl",
+      "compact_transcript": "/f6/7dc79cc67b/0/transcript.jsonl",
+      "content_hash": "/f6/7dc79cc67b/0/content_hash.txt",
+      "prompt": "/f6/7dc79cc67b/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 22263,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 268608,
+    "output_tokens": 10541,
+    "api_call_count": 4
+  }
+}
