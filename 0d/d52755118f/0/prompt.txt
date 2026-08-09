@@ -1,0 +1,18 @@
+修改一下上一个commit，把版本更新到0.2.0
+
+---
+
+在npm publish的时候出现了以下错误，应该怎么修复？上次publish是成功的：
+npm notice Publishing to https://registry.npmjs.org/ with tag latest and public access
+npm error code E404
+npm error 404 Not Found - PUT https://registry.npmjs.org/@nicklin%2fpisquad - Not found
+npm error 404
+npm error 404  '@nicklin/pisquad@0.2.0' is not in this registry.
+npm error 404
+npm error 404 Note that you can also install from a
+npm error 404 tarball, folder, http url, or git url.
+npm error A complete log of this run can be found in: /home/sankabox/.npm/_logs/2026-08-09T15_41_57_027Z-debug-0.log
+
+---
+
+可以了，我发布之后在本地也测试过了，帮我更新一下相关的文档，说明0.2.0已发布，然后commit所有改动。
