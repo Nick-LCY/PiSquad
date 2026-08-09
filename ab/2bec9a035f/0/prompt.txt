@@ -133,3 +133,29 @@ if (!existsSync(pisquadGitignore)) {
 - 检查 `test/` 下是否有测试覆盖 `writeState`，如有则更新
 - 运行 `npm test` 确认全部通过
 - 运行 `npm run build` 确认构建成功
+
+---
+
+可以，帮我更新版本号到0.2.1，然后commit。
+
+---
+
+Task: 做两件事：
+
+## 1. 更新版本号到 0.2.1
+
+搜索项目中所有包含当前版本号 "0.2.0" 的文件（排除 node_modules、dist、backups、.git），把版本号更新为 "0.2.1"。
+
+## 2. Commit
+
+提交信息用中文：
+```
+chore: bump to 0.2.1
+
+- 取消 edit 二次确认，选择后直接打开 $EDITOR
+- Editor 默认内容改为 git-merge conflict marker 格式
+- postfix 动态化（扩展名/dotfile/.txt 回退）
+- writeState() 自动创建 .pi/.pisquad/.gitignore 排除 backups
+```
+
+先 `git add -A` 暂存所有改动，然后 commit。不要 push。
