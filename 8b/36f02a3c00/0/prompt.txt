@@ -1,0 +1,285 @@
+了解一下项目目前的状态
+
+---
+
+我准备对agent工具进行一些改动，具体场景如下，你先理解一下我的需求：
+现在除了worker之外，其他几个agent的工具限制都比较死，如果有安装codegraph的话，很多agent都用不了codegraph这个工具。先帮我分析一下哪些agent会用到codegraph的工具，然后我们来考虑一下怎么修改frontmatter，能更方便地声明允许agent使用的工具（比如考虑加入黑名单模式）
+
+---
+
+可以，我觉得这个方案不错
+
+---
+
+Task: ## 任务：为 subagent 扩展添加黑名单模式和工具前缀通配符支持
+
+### 背景
+当前 subagent 扩展的 agent frontmatter 只支持 `tools:` 白名单。需要新增两个能力：
+1. `tools_deny:` 黑名单 — 不写 `tools:` 时默认获得全部工具，排除黑名单中的
+2. `tools:` 支持前缀通配符 — `codegraph_*` 匹配所有以 `codegraph_` 开头的工具
+
+### 改动文件
+
+#### 1. `.pi/extensions/subagent/agents.ts`
+
+**接口变更** — 在 `AgentConfig` 中添加 `toolsDeny` 字段：
+```typescript
+export interface AgentConfig {
+    name: string;
+    description: string;
+    tools?: string[];
+    toolsDeny?: string[];  // 新增：黑名单工具列表
+    model?: string;
+    skills?: string[];
+    systemPrompt: string;
+    source: "user" | "project";
+    filePath: string;
+}
+```
+
+**解析变更** — 在 `loadAgentsFromDir` 中，解析 `tools` 后面添加 `tools_deny` 的解析逻辑（与 `tools` 相同的逗号分隔格式），并存入 `agents.push` 中。
+
+#### 2. `.pi/extensions/subagent/index.ts`
+
+**新增 `resolveTools` 辅助函数**（放在 `resolveSkillPaths` 函数后面）：
+```typescript
+/**
+ * Resolve an agent's tool configuration to a concrete tool list.
+ *
+ * - If neither `tools` nor `toolsDeny` is set → returns undefined (all tools available)
+ * - `tools` entries ending with `*` are expanded as prefix wildcards against `allToolNames`
+ * - When `tools` is set → start from the whitelist, then filter out `toolsDeny`
+ * - When only `toolsDeny` is set → start from all tools, filter out denied ones
+ */
+function resolveTools(
+    agent: AgentConfig,
+    allToolNames: string[],
+): string[] | undefined {
+    // Neither set → undefined (all tools)
+    if (!agent.tools && !agent.toolsDeny) return undefined;
+
+    let resolved: string[];
+
+    if (agent.tools) {
+        resolved = [];
+        for (const tool of agent.tools) {
+            if (tool.endsWith("*")) {
+                const prefix = tool.slice(0, -1);
+                // Match all tools starting with the prefix
+                const matches = allToolNames.filter(t => t.startsWith(prefix));
+                resolved.push(...matches);
+            } else {
+                resolved.push(tool);
+            }
+        }
+        // Deduplicate (in case a wildcard matched an explicitly listed tool)
+        resolved = [...new Set(resolved)];
+    } else {
+        // No whitelist, start from all tools
+        resolved = [...allToolNames];
+    }
+
+    // Apply deny list
+    if (agent.toolsDeny && agent.toolsDeny.length > 0) {
+        resolved = resolved.filter(t => !agent.toolsDeny!.includes(t));
+    }
+
+    return resolved.length > 0 ? resolved : undefined;
+}
+```
+
+**修改 `runSingleAgent` 函数签名** — 添加 `allToolNames: string[]` 参数（加在 `modelOverride` 参数之前）：
+```
+async function runSingleAgent(
+    defaultCwd: string,
+    agents: AgentConfig[],
+    agentName: string,
+    task: string,
+    cwd: string | undefined,
+    step: number | undefined,
+    signal: AbortSignal | undefined,
+    onUpdate: OnUpdateCallback | undefined,
+    makeDetails: (results: SingleResult[]) => SubagentDetails,
+    allToolNames: string[],  // 新增
+    modelOverride: string | undefined,
+): Promise<SingleResult> {
+```
+
+**修改 `runSingleAgent` 内部工具解析逻辑** — 将原来第 ~277 行的：
+```typescript
+if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+```
+替换为：
+```typescript
+const resolvedTools = resolveTools(agent, allToolNames);
+if (resolvedTools && resolvedTools.length > 0) args.push("--tools", resolvedTools.join(","));
+```
+
+**所有调用 `runSingleAgent` 的地方**都需要传入 `allToolNames`。在 `execute` 回调开头，通过 `pi.getAllTools()` 获取所有工具名，然后传入每次调用。`pi` 对象在扩展的闭包中可访问。
+
+具体来说，在 `execute` 回调函数体的开头（discoverAgents 之后）添加：
+```typescript
+const allToolNames = pi.getAllTools().map(t => t.name);
+```
+
+然后所有 `runSingleAgent(...)` 调用中，在 `makeDetails(...)` 参数之后、`modelOverride` / `step.model ?? params.model` 之前插入 `allToolNames,`。
+
+一共有 3 处调用：
+- chain 模式中的 `runSingleAgent` 调用（约第 340 行）
+- parallel 模式中的 `runSingleAgent` 调用（约第 400 行）
+- single 模式中的 `runSingleAgent` 调用（约第 430 行）
+
+#### 3. 更新 Agent frontmatter 文件
+
+修改以下 3 个 agent 的 `.md` 文件，将 `tools:` 白名单替换为 `tools_deny:` 黑名单：
+
+**`.pi/agents/scout.md`**：
+- 将 `tools: read, bash, grep, find, ls` 替换为 `tools_deny: write, edit`
+
+**`.pi/agents/planner.md`**：
+- 将 `tools: read, grep, find, ls` 替换为 `tools_deny: write, edit`
+
+**`.pi/agents/reviewer.md`**：
+- 将 `tools: read, grep, find, ls, bash` 替换为 `tools_deny: write, edit`
+
+**`.pi/agents/worker.md`** 和 **`.pi/agents/archivist.md`** 保持不变。
+
+### 注意事项
+- `pi.getAllTools()` 返回 `ToolInfo[]`，其中 `ToolInfo` 有 `name: string` 字段
+- tool 名称大小写敏感
+- 保持代码风格与现有代码一致（缩进用 tab、分号等）
+- 所有现有功能必须保持不变（纯 whitelist 模式仍然有效）
+
+---
+
+你测试一下各个agent，看看是否正常
+
+---
+
+Task: 快速侦察一下这个项目里有哪些 agent 定义文件（在 .pi/agents/ 下），用你最快的工具。列出每个 agent 的 name 和 description。
+
+---
+
+都修复一下。然后关于subagent，所有的subagent都禁止再次调用subagent工具（默认禁止），不需要在frontmatter声明。
+
+---
+
+Task: ## 任务：修复 subagent 扩展的 3 个 Critical 问题
+
+### 背景
+上一轮实现了 `tools_deny` 黑名单和 `tools` 通配符支持，但 reviewer 发现了 3 个必须修复的问题。
+
+### 修复 1：空集回退漏洞（Critical）
+
+**问题**：`resolveTools` 在 deny 把最终集清空时返回 `undefined`，导致调用方跳过 `--tools`，子进程得到全部工具。这是提权漏洞。
+
+**修复**：
+- `resolveTools` 的返回类型改为 `string[]`（不再返回 `undefined`）
+- 调用方：当 `resolvedTools.length === 0` 时传 `--no-tools`（而非跳过 `--tools`）
+
+### 修复 2：subagent 默认禁止递归委派（用户要求）
+
+**问题**：任何 subagent 都可以通过 subagent 工具委派 worker（全权限），绕过权限限制。
+
+**修复**：在 `resolveTools` 中，**始终**从 resolved 列表中过滤掉 `"subagent"` 工具。不需要在 agent frontmatter 中声明。这意味着所有通过 subagent 调用的 agent 都无法再调用 subagent。
+
+### 修复 3：planner 不应有 bash（回归）
+
+**问题**：planner 旧配置 `tools: read, grep, find, ls` 没有 `bash`，新配置 `tools_deny: write, edit` 反而给了它 bash。scout 和 reviewer 旧配置本来就有 bash，保持不变。
+
+**修复**：`planner.md` 的 frontmatter 改为 `tools_deny: write, edit, bash`
+
+---
+
+### 具体改动
+
+#### `.pi/extensions/subagent/index.ts`
+
+**`resolveTools` 函数** — 重写为以下逻辑：
+
+```typescript
+function resolveTools(
+	agent: AgentConfig,
+	allToolNames: string[],
+): string[] {
+	let resolved: string[];
+
+	if (agent.tools) {
+		// Whitelist with wildcard expansion
+		resolved = [];
+		for (const tool of agent.tools) {
+			if (tool.endsWith("*")) {
+				const prefix = tool.slice(0, -1);
+				const matches = allToolNames.filter((t) => t.startsWith(prefix));
+				resolved.push(...matches);
+			} else {
+				resolved.push(tool);
+			}
+		}
+		// Deduplicate
+		resolved = [...new Set(resolved)];
+	} else {
+		// No whitelist, start from all tools
+		resolved = [...allToolNames];
+	}
+
+	// Apply explicit deny list from frontmatter
+	if (agent.toolsDeny && agent.toolsDeny.length > 0) {
+		resolved = resolved.filter((t) => !agent.toolsDeny!.includes(t));
+	}
+
+	// Always deny subagent to prevent recursive delegation
+	resolved = resolved.filter((t) => t !== "subagent");
+
+	return resolved;
+}
+```
+
+**调用处**（`runSingleAgent` 函数内）— 当前代码：
+
+```typescript
+const resolvedTools = resolveTools(agent, allToolNames);
+if (resolvedTools && resolvedTools.length > 0) args.push("--tools", resolvedTools.join(","));
+```
+
+改为：
+
+```typescript
+const resolvedTools = resolveTools(agent, allToolNames);
+if (resolvedTools.length > 0) {
+	args.push("--tools", resolvedTools.join(","));
+} else {
+	args.push("--no-tools");
+}
+```
+
+#### `.pi/agents/planner.md`
+
+frontmatter 的 `tools_deny: write, edit` 改为 `tools_deny: write, edit, bash`
+
+---
+
+### 注意事项
+- `resolveTools` 不再返回 `undefined`，始终返回 `string[]`
+- 调用处不再需要 `resolvedTools &&` 判空
+- JSDoc 注释同步更新（移除 "returns undefined when..." 的描述）
+- 保持现有代码风格（tab 缩进）
+- 测试：42 个现有测试必须全部通过，tsup 构建成功
+
+---
+
+把这些修复同步到assets中
+
+---
+
+Task: ## 任务：将项目改动同步到 assets 模板目录
+
+以下 5 个源文件已修改，需要同步覆盖到 assets 对应路径：
+
+1. `.pi/extensions/subagent/agents.ts` → `assets/.pi/extensions/subagent/agents.ts`
+2. `.pi/extensions/subagent/index.ts` → `assets/.pi/extensions/subagent/index.ts`
+3. `.pi/agents/scout.md` → `assets/.pi/agents/scout.md`
+4. `.pi/agents/planner.md` → `assets/.pi/agents/planner.md`
+5. `.pi/agents/reviewer.md` → `assets/.pi/agents/reviewer.md`
+
+直接用 cp 命令覆盖即可。worker.md 和 archivist.md 没有改动，不需要同步。
