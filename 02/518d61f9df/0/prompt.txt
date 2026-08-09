@@ -1,0 +1,44 @@
+有几个问题：
+1. 现在tui界面中，中英混杂。我们建立一个convention，所有tui仅允许英文。然后你把现有的代码做一个修改。
+2. 在比较diff的时候，能不能优化一下做颜色区分？现在只有一个+/-来标记区分，我们可以参考git的模式，增加用绿色，删除用红色。
+3. sankabox@7640hs:~/code/EasyCV$ node /home/sankabox/code/PiExperiment/dist/bin.js upgrade --no-self
+pisquad upgrade → /home/sankabox/code/EasyCV
+? Choose upgrade strategy for interactive files
+✔ Choose upgrade strategy for interactive files Decide per fileREM
+如上所示，两个问题 - a. choose... 那行显示了两遍。 b. 正式选择后，结尾多了一个REM。
+
+---
+
+Task: 侦察三个问题的代码现状。
+
+## 问题 1:TUI 中英混杂 + 建立「TUI 仅英文」convention
+- 找出 CLI 所有**面向用户的 TUI 输出**中的中文文案:grep 搜索 src/ 下所有 .ts 文件里的中文字符(出现在 message / console.log / logger / ui 输出里的中文,不含代码注释)。
+- 重点查:`src/commands/*.ts`、`src/lib/ui.ts`、`src/lib/logger.ts`、`src/upgrade/decision-defaults.ts`、`src/upgrade/decision.ts`、`src/upgrade/self.ts`、`src/lib/plugins/*.ts`、`src/bin.ts`、`src/main.ts`。
+- 逐处列出:文件:行号 + 中文字符串 + 上下文(message / logger / console / 模板字符串)。
+- 列出现有 `docs/conventions/` 目录有哪些文件(供新增「TUI 仅英文」convention 时保持结构一致)。
+
+## 问题 2:diff 颜色区分(参考 git:+绿 -红)
+- 找出当前 diff 渲染逻辑:`src/upgrade/decision-defaults.ts` 的 `defaultRenderUnifiedDiffForEntry`(或类似名),它怎么渲染 +/- 标记?用 `diff -u` 输出还是自己解析?逐行输出还是整块?
+- `package.json` 是否已有颜色库(ansi-colors / chalk / picocolors / kolore 等)?`@inquirer/prompts` 7.x 是否自带可用的颜色工具?当前 diff 输出的确切格式(贴一段渲染代码)。
+
+## 问题 3:select 显示 bug(最高优先级)
+用户在真实终端(直接 `node dist/bin.js upgrade --no-self`)的输出:
+```
+? Choose upgrade strategy for interactive files
+✔ Choose upgrade strategy for interactive files Decide per fileREM
+```
+症状:a. message「Choose upgrade strategy for interactive files」显示了两遍;b. 选「Decide per file」后,answer 末尾多了「REM」。
+
+侦察重点:
+- `src/upgrade/decision-defaults.ts` 的 `defaultPromptStrategy` 的 select 调用**逐字**贴出:message 字符串、choices 每项的 name/value/short/description 字段。是否给选项设了 `short` 字段?(inquirer select 的 `short` 是选中后状态栏显示的简短文本)
+- `src/commands/upgrade.ts`:在调 `resolveUpgradeActions` / 决策层前后,是否有 logger/console 输出与 message 重叠的内容(可能导致 message 两遍)?
+- 「REM」的可能来源:
+  - grep 整个 src/ 下是否有 "REM" 字面量;
+  - choice 是否有 short 字段含 "REM" 或其子串;
+  - description 字段内容是否有问题;
+  - 是否有 ANSI escape 处理/拼接异常;
+  - `@inquirer/select` 7.x 选中后 status 行的渲染逻辑(如果能在 node_modules 里确认)。
+- 顺带:`defaultPromptFileDecision` 的 select 调用也逐字贴出(它可能也有同样的 short/description 写法,问题 3 的根因可能两个 prompt 共有)。
+
+## 产出
+分三个问题给结构化报告:现状(文件:行号 + 代码片段)+ 根因/线索 + 影响面。问题 3 重点:给出 message 重复和「REM」的**最可能根因 + 代码依据**。只读,不改任何文件。
