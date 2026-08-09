@@ -318,6 +318,51 @@ function resolveSkillPaths(
 	return { paths, missing, available };
 }
 
+/**
+ * Resolve an agent's tool configuration to a concrete tool list.
+ *
+ * - If neither `tools` nor `toolsDeny` is set → returns all tools
+ * - `tools` entries ending with `*` are expanded as prefix wildcards against `allToolNames`
+ * - When `tools` is set → start from the whitelist, then filter out `toolsDeny`
+ * - When only `toolsDeny` is set → start from all tools, filter out denied ones
+ * - Always filters out `"subagent"` to prevent recursive delegation through child agents
+ *
+ * Returns a concrete `string[]` (never undefined) so the caller can distinguish
+ * "empty whitelist" (deny everything) from "no whitelist at all" (allow all).
+ */
+function resolveTools(agent: AgentConfig, allToolNames: string[]): string[] {
+	let resolved: string[];
+
+	if (agent.tools) {
+		// Whitelist with wildcard expansion
+		resolved = [];
+		for (const tool of agent.tools) {
+			if (tool.endsWith("*")) {
+				const prefix = tool.slice(0, -1);
+				const matches = allToolNames.filter((t) => t.startsWith(prefix));
+				resolved.push(...matches);
+			} else {
+				resolved.push(tool);
+			}
+		}
+		// Deduplicate
+		resolved = [...new Set(resolved)];
+	} else {
+		// No whitelist, start from all tools
+		resolved = [...allToolNames];
+	}
+
+	// Apply explicit deny list from frontmatter
+	if (agent.toolsDeny && agent.toolsDeny.length > 0) {
+		resolved = resolved.filter((t) => !agent.toolsDeny!.includes(t));
+	}
+
+	// Always deny subagent to prevent recursive delegation
+	resolved = resolved.filter((t) => t !== "subagent");
+
+	return resolved;
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 async function runSingleAgent(
@@ -330,6 +375,7 @@ async function runSingleAgent(
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	allToolNames: string[],
 	modelOverride: string | undefined,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
@@ -353,7 +399,12 @@ async function runSingleAgent(
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (effectiveModel) args.push("--model", effectiveModel);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	const resolvedTools = resolveTools(agent, allToolNames);
+	if (resolvedTools.length > 0) {
+		args.push("--tools", resolvedTools.join(","));
+	} else {
+		args.push("--no-tools");
+	}
 
 	// Strict skill whitelist: deny all skills by default. Only skills declared on
 	// the agent are exposed to the child, resolved to concrete paths via `--skill`.
@@ -554,6 +605,7 @@ export default function (pi: ExtensionAPI) {
 			const agentScope: AgentScope = params.agentScope ?? "both";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
+			const allToolNames = pi.getAllTools().map((t) => t.name);
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
@@ -615,6 +667,7 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						chainUpdate,
 						makeDetails("chain"),
+						allToolNames,
 						step.model ?? params.model,
 					);
 					results.push(result);
@@ -694,6 +747,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						},
 						makeDetails("parallel"),
+						allToolNames,
 						t.model ?? params.model,
 					);
 					allResults[index] = result;
@@ -731,6 +785,7 @@ export default function (pi: ExtensionAPI) {
 					signal,
 					onUpdate,
 					makeDetails("single"),
+					allToolNames,
 					params.model,
 				);
 				const isError = isFailedResult(result);
