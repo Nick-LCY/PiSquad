@@ -17,3 +17,4 @@
 ## 清单
 - [[architecture/decisions/0001-pisquad-cli.md]] — pisquad 升级为 npm 全局 CLI（语言/包名/分发/仓库结构/技术栈/upgrade 安全机制/docs diff/不向后兼容）
 - [[architecture/decisions/0002-self-update-version-check.md]] — self-update 前比较版本，避免重跑死循环（hotfix 0.1.0→0.1.1）
+- [[architecture/decisions/0003-interactive-upgrade.md]] — upgrade 引入交互式决策层（管理区/交互区拆分 + `$EDITOR` 方案 A 合并 + PkgInclude.interactive 标签）

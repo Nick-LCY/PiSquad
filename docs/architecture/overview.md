@@ -22,7 +22,7 @@ pi-squad 是一套基于 pi coding agent 的可复用多 Agent、文档驱动开
 | Extensions | 能力扩展：subagent / codegraph / entire / wikilink-lint | `assets/.pi/extensions/` |
 | Skills | 约定注入：project-docs / workflow | `assets/.pi/skills/` |
 | Agents | 专职分工：scout / planner / worker / reviewer / archivist | `assets/.pi/agents/` |
-| Docs | 文档驱动：结构即导航 + 渐进式披露的模板骨架 | `assets/docs/`（即本库 `docs/`） |
+| Docs | 文档驱动：结构即导航 + 渐进式披露的模板骨架 | `assets/docs/` |
 
 **协作链**（并非每次都走全链路，可按需裁剪）：
 
@@ -78,6 +78,7 @@ pi-squad 是一套基于 pi coding agent 的可复用多 Agent、文档驱动开
 - **结构即导航 + 渐进式披露**：每层目录配一份 README 作为该层总地图；从进度看板出发，按链接下钻详情，不一次性加载
 - **wikilink 硬约束**：docs 内文档互引一律用 wikilink，且仅指向 docs/ 内真实存在的文件，由 `wikilink-lint` 自动校验（越界或失效即拒绝写入）
 - **pisquad 已从 bash 安装器升级为 npm CLI**：见 [[architecture/decisions/0001-pisquad-cli.md]]；分发、版本管理与升级路径都迁移到 npm 包形式，但保留极简 bash bootstrap 兼容 `curl | bash` 入口
+- **upgrade 引入交互式决策层**：见 [[architecture/decisions/0003-interactive-upgrade.md]]；按目录白名单拆交互区（`docs/**` + `.pi/agents/**` + `.pi/skills/**`）与管理区（`.pi/extensions/**`），交互区走决策层逐文件询问 adopt/keep/edit，merge 走 `$EDITOR` 方案 A（不做三方 merge base）；非交互 / 无 tty 退化为 all-adopt+备份
 
 ---
 

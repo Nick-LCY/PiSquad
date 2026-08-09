@@ -38,6 +38,7 @@
 12. **修整个安装 bug**：勾选 entire 时既 cp `extensions/entire/` 目录到目标，也执行 `entire enable --agent pi`
 13. **子命令表面**：`pisquad`（无参 = install）/ `install [path]` / `upgrade [path]` / `version` / `help`
 14. **分阶段交付**：MVP（能装能用）→ upgrade 全套 → 文档与发布，共 14 个任务，详见 `tasks/pisquad-cli/`
+15. **升级决策层（管理区 / 交互区拆分 + `$EDITOR` 编辑旧文件）**：在 0.1.1 之后追加，见 ADR [[architecture/decisions/0003-interactive-upgrade.md]]。按目录白名单把 upgrade 范围拆成交互区（`docs/**`、`.pi/agents/**`、`.pi/skills/**`，走决策层逐文件询问 adopt/keep/edit）和管理区（`.pi/extensions/**`，保持自动覆盖+备份）；merge 走 `$EDITOR` 方案 A（不拉三方 merge base）；决策层独立、纯协调、deps 注入，与 backup/copy/prune 解耦；非交互/无 tty 退化为「全部采用新+备份」。本次不对前 14 条决策做任何修改，只是叠加增强。
 
 ## 影响
 

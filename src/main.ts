@@ -39,7 +39,9 @@ program
   .option("--no-self", "Skip the CLI self-update stage")
   .option("--with <channels>", "Comma-separated list of optional channels to enable")
   .option("--without <channels>", "Comma-separated list of optional channels to disable")
-  .option("-y, --yes", "Accept defaults without prompts (reserved; upgrade has no prompts today)")
+  .option("-y, --yes", "Accept defaults without prompts (skip install channel prompts and upgrade interactive prompts)")
+  .option("--interactive", "Force per-file interactive prompts (requires a tty)")
+  .option("--no-interactive", "Skip interactive prompts even on a tty (batch adopt + backup)")
   .action(async (pathArg: string | undefined, options: Record<string, unknown>) => {
     // Commander's `--no-self` flag toggles `options.self` to `false`; the
     // conventional `options.noSelf` key is never set, so we check the negated
@@ -48,6 +50,17 @@ program
       options.noSelf === true ||
       options.self === false ||
       process.env.PISQUAD_NO_SELF === "1";
+    // Interactive flag parsing: `--interactive` sets options.interactive = true;
+    // `--no-interactive` sets options.interactive = false. We track which
+    // case the user took so the decision layer can warn when the user
+    // explicitly asked for non-interactive but we silently fell back.
+    const interactive =
+      options.interactive === true
+        ? true
+        : options.interactive === false
+          ? false
+          : undefined;
+    const interactiveSetByUser = interactive !== undefined;
     await upgradeCommand({
       target: pathArg,
       prune: Boolean(options.prune),
@@ -56,6 +69,8 @@ program
       with: typeof options.with === "string" ? options.with : undefined,
       without: typeof options.without === "string" ? options.without : undefined,
       yes: Boolean(options.yes),
+      interactive,
+      interactiveSetByUser,
     });
   });
 

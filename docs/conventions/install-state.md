@@ -84,6 +84,7 @@ docs/README.md
 - **不应手改 state.json**：手改后的内容 pisquad 不保证兼容；下次 install / upgrade 时会被整体覆盖
 - state.json 与 backups/ 目录本身应纳入用户项目的 `.gitignore`（pisquad install 时应主动写一条 ignore 规则）
 - 这两类内容**不算用户修改**：upgrader 做 sha256 diff 时，遇到它们不视为「用户改动」
+- **升级 partial apply 语义**（0.1.1 之后，见 ADR [[architecture/decisions/0003-interactive-upgrade.md]]）：走决策层后，部分交互区文件可能被用户保留（keep / edit）。`state.version` 仍写新 assets 版本，**state 不反映逐文件一致性**；下次 upgrade 这些被保留的文件会以 modified 再次出现。warn 信息形如「kept N user modification(s) — they will reappear in next upgrade's diff」
 
 ## 与 git 协作
 
@@ -97,6 +98,6 @@ docs/README.md
 
 ## 跨文档引用
 
-- 决策依据：[[architecture/decisions/0001-pisquad-cli.md]]
+- 决策依据：[[architecture/decisions/0001-pisquad-cli.md]]（升级基线）+ [[architecture/decisions/0003-interactive-upgrade.md]]（决策层叠加）
 - 需求文档：[[prds/pisquad-cli.md]]
-- 升级任务：`tasks/pisquad-cli/`（09 / 10 / 11）
+- 升级任务：`tasks/pisquad-cli/`（09 / 10 / 11 / 15）

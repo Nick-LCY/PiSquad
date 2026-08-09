@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, rmSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { resolveTarget, stateFile, resolveAsset } from "../lib/paths.js";
 import { logger } from "../lib/logger.js";
@@ -19,6 +19,11 @@ import {
 import { installCodegraph, installEntire } from "../lib/plugins/index.js";
 import { copyDir } from "../lib/copy.js";
 import { selfUpdate } from "../upgrade/self.js";
+import { resolveUpgradeActions, type ResolvedPlan } from "../upgrade/decision.js";
+import { buildDefaultDecisionDeps } from "../upgrade/decision-defaults.js";
+import { isInteractive } from "../lib/env.js";
+import { ensureDir, atomicWriteFile } from "../lib/fs-safe.js";
+import { ExitPromptError } from "@inquirer/core";
 import type { Channels } from "../lib/ui.js";
 
 const execFileAsync = promisify(execFile);
@@ -35,8 +40,35 @@ export interface UpgradeOptions {
   noSelf?: boolean;
   with?: string;
   without?: string;
-  /** Reserved for symmetry with install; upgrade has no interactive prompts today. */
+  /**
+   * Explicit user request for interactive prompts. `true` is set by
+   * `--interactive`; `false` by `--no-interactive`; `undefined` means
+   * "default" — fall through to the tty + yes-based decision in
+   * `upgradeCommand`.
+   */
+  interactive?: boolean;
+  /**
+   * True when the user explicitly passed `--interactive` or `--no-interactive`
+   * on the command line. Distinguishes "user said no" from "user said
+   * nothing, the upgrader defaulted". The decision layer uses this to know
+   * whether it should warn when the tty-based fallback runs.
+   */
+  interactiveSetByUser?: boolean;
+  /** Suppress all prompts and accept defaults (existing -y / --yes flag). */
   yes?: boolean;
+  /**
+   * @internal Test seam — pass fake `DecisionDeps` to drive every decision
+   * branch without spawning real prompts or editors. Production code does
+   * not set this; `buildDefaultDecisionDeps()` is used instead.
+   */
+  decisionDeps?: import("../upgrade/decision.js").DecisionDeps;
+  /**
+   * @internal Test seam — force `isInteractiveEnv` to a specific value
+   * regardless of the host tty state. Production code does not set this.
+   * Useful for integration tests that want to exercise the interactive
+   * code path on CI hosts with no tty.
+   */
+  forceInteractiveEnv?: boolean;
 }
 
 /**
@@ -102,9 +134,15 @@ export async function upgradeCommand(options: UpgradeOptions): Promise<void> {
   // 4. Build the diff include list (subtree granularity, never the whole .pi/).
   //    The includes are intentionally narrow so .pi/assets-version.txt and
   //    .pi/.gitignore (root files) never enter the diff.
+  //
+  //    `interactive: true` flags user-editable territory (docs, agents,
+  //    skills). These are eligible for per-file prompts in
+  //    `resolveUpgradeActions`. Extension packages are managed by the
+  //    pisquad release process — they are always overwritten, never
+  //    presented for per-file adoption.
   const includes: PkgInclude[] = [
-    { pkgSubPath: ".pi/agents", targetSubPath: ".pi/agents" },
-    { pkgSubPath: ".pi/skills", targetSubPath: ".pi/skills" },
+    { pkgSubPath: ".pi/agents", targetSubPath: ".pi/agents", interactive: true },
+    { pkgSubPath: ".pi/skills", targetSubPath: ".pi/skills", interactive: true },
     {
       pkgSubPath: ".pi/extensions/subagent",
       targetSubPath: ".pi/extensions/subagent",
@@ -113,7 +151,7 @@ export async function upgradeCommand(options: UpgradeOptions): Promise<void> {
       pkgSubPath: ".pi/extensions/wikilink-lint",
       targetSubPath: ".pi/extensions/wikilink-lint",
     },
-    { pkgSubPath: "docs", targetSubPath: "docs" },
+    { pkgSubPath: "docs", targetSubPath: "docs", interactive: true },
   ];
   if (newChannels.codegraph) {
     includes.push({
@@ -144,74 +182,222 @@ export async function upgradeCommand(options: UpgradeOptions): Promise<void> {
     logger.info(`removed channels: ${versionDiff.removedChannels.join(", ")}`);
   }
 
-  // 6. Dry-run: print the plan and stop before any writes.
+  // 6. Dry-run: print the plan and stop before any writes. We still run
+  //    `resolveUpgradeActions` here (in non-interactive mode) so the user
+  //    sees a decision preview alongside the raw plan — counts of how many
+  //    files would be adopted, kept, removed, and backed up under the
+  //    active flags. `resolveUpgradeActions` is pure (no FS or editor side
+  //    effects) so this is safe in dry-run. When the plan is empty we skip
+  //    the decision layer entirely; there is nothing to summarise.
   if (dryRun) {
+    const planIsEmpty =
+      plan.modified.length === 0 && plan.added.length === 0 && plan.removed.length === 0;
+    if (!planIsEmpty) {
+      // Force non-interactive: no prompts will fire, the all-adopt default
+      // applies, and we never call createBackup from this path.
+      const dryRunDecision = await resolveUpgradeActions(
+        {
+          plan,
+          includes,
+          target,
+          prune: options.prune === true,
+          interactive: false,
+          interactiveSetByUser: true,
+          isInteractiveEnv: false,
+          yes: true,
+        },
+        options.decisionDeps ?? buildDefaultDecisionDeps(target, resolveAsset("")),
+      );
+      const adoptCount = dryRunDecision.adopt.size;
+      const keepCount = dryRunDecision.keep.size;
+      const editCount = dryRunDecision.editResults.length;
+      const backupCount = dryRunDecision.backup.size;
+      const removeCount = dryRunDecision.remove.size;
+      logger.info(
+        `Would adopt: ${adoptCount} / keep: ${keepCount} / edit: ${editCount} / backup: ${backupCount} / remove: ${removeCount}`,
+      );
+    }
     printPlan(plan, options.prune === true);
     logger.info("DRY RUN — no changes made");
     return;
   }
 
-  // 7. Back up files that will be overwritten (and, when pruning, deleted).
-  const backupSet = new Set<string>();
-  for (const m of plan.modified) backupSet.add(m.relPath);
-  if (options.prune) {
-    for (const r of plan.removed) backupSet.add(r.relPath);
+  // 7. Run the decision layer. Interactive mode requires BOTH:
+  //    a. The caller didn't pass `--no-interactive` or `--yes`.
+  //    b. The host has a real tty (and is not CI / PISQUAD_NO_TTY).
+  //
+  //    Without both, we silently fall through to the all-adopt default —
+  //    preserving the legacy "no tty → batch overwrite" behaviour. The
+  //    decision layer is wrapped in its own try/catch so that a Ctrl-C
+  //    inside @inquirer/prompts (an ExitPromptError) leaves the target
+  //    untouched and exits with code 1.
+  const isInteractiveEnv =
+    options.yes !== true &&
+    options.interactive !== false &&
+    (options.forceInteractiveEnv === true || isInteractive());
+  // Heads-up: the user explicitly asked for `--interactive` but we have no
+  // tty (or they used `--yes`). Without this warning the command would
+  // silently downgrade to batch adopt, which is surprising for someone
+  // who reached for the flag. Skip the warning when forceInteractiveEnv
+  // is in play (test seam) so CI-driven suites don't see noise.
+  if (
+    options.forceInteractiveEnv !== true &&
+    options.interactiveSetByUser === true &&
+    options.interactive === true &&
+    !isInteractiveEnv
+  ) {
+    logger.warn(
+      "--interactive ignored: no TTY detected, falling back to non-interactive (adopt-new) mode",
+    );
   }
-  if (backupSet.size > 0) {
-    await createBackup(target, Array.from(backupSet).map((relPath) => ({ relPath })), "before-upgrade");
+  let decision: ResolvedPlan;
+  try {
+    decision = await resolveUpgradeActions(
+      {
+        plan,
+        includes,
+        target,
+        prune: options.prune === true,
+        interactive: options.interactive === true,
+        interactiveSetByUser: options.interactiveSetByUser === true,
+        isInteractiveEnv,
+        yes: options.yes === true,
+      },
+      options.decisionDeps ?? buildDefaultDecisionDeps(target, resolveAsset("")),
+    );
+  } catch (error) {
+    // Distinguish two failure modes: a user-initiated cancellation (Ctrl-C
+    // → @inquirer/core's ExitPromptError) is not a fault; surface it
+    // honestly. Anything else is a real exception in the decision layer
+    // (e.g. diff CLI failure, editor crash, FS error) — call it a failure
+    // so the user can debug. Both still leave the target untouched
+    // because the decision layer runs before the backup stage.
+    const isUserCancel =
+      error instanceof ExitPromptError ||
+      (error instanceof Error && error.name === "ExitPromptError");
+    if (isUserCancel) {
+      logger.error("user cancelled — no changes made, no backup created");
+    } else {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`upgrade failed during decision: ${message}`);
+    }
+    process.exitCode = 1;
+    return;
   }
 
-  // 8-11. Apply changes, prune, run channel-specific work. Wrapped so any
+  // 8. Back up files the decision layer flagged. Both `adopt` (existing files
+  //    that will be overwritten) and `edit` (existing files we will overwrite
+  //    post-merge) entries get archived so the user can always recover. We
+  //    emit one tarball labelled "before-upgrade" — matching the legacy
+  //    command's contract so existing restore tooling keeps working.
+  //
+  //    Wrapped in try/catch so a missing `tar` binary, full disk, or name
+  //    collision produces a clean exit-1 instead of an unhandled rejection.
+  //    On backup failure we must not proceed to the copy stage (the user
+  //    has no recovery path otherwise) and the target is left untouched.
+  const backupSet = decision.backup;
+  let backupTarPath: string | null = null;
+  if (backupSet.size > 0) {
+    try {
+      const backupResult = await createBackup(
+        target,
+        Array.from(backupSet).map((relPath) => ({ relPath })),
+        "before-upgrade",
+      );
+      backupTarPath = backupResult.path;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`backup failed: ${message}`);
+      logger.error(
+        `no changes were made to ${target}; re-run once the issue is resolved`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  // 9-12. Apply changes, prune, run channel-specific work. Wrapped so any
   //       failure is surfaced cleanly with exit code 1 and the backup tarball
   //       left on disk for the user to inspect / restore manually.
   try {
-    // 8. Apply modified + added by syncing each include subtree from assets.
+    // 9. Apply modified + added by syncing each include subtree from assets.
     //    copyDir overwrites only files present in src, leaving extra files in
     //    dest alone — so user-added files survive unless --prune handles them
     //    explicitly below.
+    //
+    //    The filter combines three concerns:
+    //    - codegraph subtree skips node_modules and package-lock.json (would
+    //      be restored by `npm install` anyway and copying is slow).
+    //    - The decision layer's `keep` set is skipped so user-modified
+    //      interactive files are NOT overwritten by the recursive copy.
+    //    - Files handled by `editResults` are skipped here because step 10
+    //      writes the user-merged content over the top of whatever the copy
+    //      would have produced.
     for (const inc of includes) {
       const source = resolveAsset(inc.pkgSubPath);
       const destination = join(target, inc.targetSubPath);
       const isCodegraph = inc.pkgSubPath === ".pi/extensions/codegraph";
       copyDir(source, destination, {
-        filter: isCodegraph
-          ? (_abs, rel) => rel !== "node_modules" && rel !== "package-lock.json"
-          : undefined,
+        filter: (_abs, rel) => {
+          const targetRel = inc.targetSubPath ? `${inc.targetSubPath}/${rel}` : rel;
+          if (isCodegraph && (rel === "node_modules" || rel === "package-lock.json")) return false;
+          if (decision.keep.has(targetRel)) return false;
+          if (decision.editResults.some((e) => e.relPath === targetRel)) return false;
+          return true;
+        },
         onSkip: (rel, reason) => logger.warn(`Skipped ${rel} (${reason})`),
       });
     }
 
-    // 9. Handle removed files: default keep, --prune delete.
-    if (options.prune) {
-      for (const r of plan.removed) {
-        const abs = join(target, r.relPath);
-        try {
-          rmSync(abs, { force: true });
-        } catch (error) {
-          logger.warn(
-            `Failed to prune ${r.relPath}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+    // 10. Write back user-edited files. The recursive copy in step 9 staged
+    //     the new assets version; we overwrite with the user's edited
+    //     content here. Atomic write so a crash mid-write cannot corrupt
+    //     the file. `matchesTheirs === true` means the user opened the
+    //     editor, saw the new content, and saved it verbatim — i.e. they
+    //     effectively chose "Adopt new" via the editor.
+    for (const ed of decision.editResults) {
+      const abs = join(target, ed.relPath);
+      ensureDir(dirname(abs));
+      atomicWriteFile(abs, ed.content);
+      logger.info(
+        `wrote edited ${ed.relPath}${ed.matchesTheirs ? " (matches new version — merged)" : " (user edit kept)"}`,
+      );
+    }
+
+    // 11. Handle removed files: walk the decision's `remove` set (which only
+    //     contains user-confirmed deletions when --prune is in play).
+    for (const relPath of decision.remove) {
+      const abs = join(target, relPath);
+      try {
+        rmSync(abs, { force: true });
+      } catch (error) {
+        logger.warn(
+          `Failed to prune ${relPath}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
 
-    // 10. Channel-specific handling.
+    // 12. Channel-specific handling. codegraph npm install runs only when
+    //     the extension payload actually changed AND we adopted/edited
+    //     something under .pi/extensions/codegraph/. We consult the
+    //     decision layer's sets (not the raw plan) so a "keep my codegraph
+    //     override" choice does not trigger a npm install that would clobber
+    //     the kept file via package.json's deps update.
     const codegraphNewlyEnabled = newChannels.codegraph && !state.channels.codegraph;
     const entireNewlyEnabled = newChannels.entire && !state.channels.entire;
 
     if (codegraphNewlyEnabled) {
       // installCodegraph does its own copy + npm install + codegraph init.
-      // The copy we did in step 8 is redundant but harmless (writes the same
+      // The copy we did in step 9 is redundant but harmless (writes the same
       // content) — we let installCodegraph own the full bootstrap.
       await installCodegraph(target, { logger });
     } else if (newChannels.codegraph) {
-      // Already enabled. Re-run npm install only when the extension payload
-      // actually changed (package.json etc.). Never re-run codegraph init —
-      // the user's index lives there.
-      const codegraphChanged =
-        plan.modified.some((p) => p.relPath.startsWith(".pi/extensions/codegraph/")) ||
-        plan.added.some((p) => p.relPath.startsWith(".pi/extensions/codegraph/"));
-      if (codegraphChanged) {
+      const codegraphTouched =
+        Array.from(decision.adopt).some((p) =>
+          p.startsWith(".pi/extensions/codegraph/"),
+        ) ||
+        decision.editResults.some((e) => e.relPath.startsWith(".pi/extensions/codegraph/"));
+      if (codegraphTouched) {
         await runNpmInstall(join(target, ".pi", "extensions", "codegraph"));
       }
     }
@@ -220,7 +406,7 @@ export async function upgradeCommand(options: UpgradeOptions): Promise<void> {
       await installEntire(target, { logger });
     }
 
-    // 11. codegraph.json: only copy when the target lacks one. We never
+    // 13. codegraph.json: only copy when the target lacks one. We never
     //     overwrite the user's existing config (respect their customisation).
     //     When codegraph is newly enabled, installCodegraph already handles
     //     this; we only need to run the check for the pre-existing case.
@@ -245,7 +431,11 @@ export async function upgradeCommand(options: UpgradeOptions): Promise<void> {
     return;
   }
 
-  // 12. Persist new state.
+  // 14. Persist new state. We always write the latest assets version —
+  //     even when the user chose "keep my version" for some files, so
+  //     the package-side baseline is still current. Per-user overrides
+  //     reappear in the next diff because their hashes differ from the
+  //     assets' hashes; the warning at the end reminds the user of that.
   writeState(target, {
     version: assetsVersion,
     cliVersion,
@@ -253,17 +443,28 @@ export async function upgradeCommand(options: UpgradeOptions): Promise<void> {
     lastUpgradedAt: new Date().toISOString(),
   });
 
-  // 13. Summary.
+  // 15. Summary.
+  const keptInteractive = Array.from(decision.entries.values()).filter(
+    (d) => d === "keep",
+  ).length;
   printSummary({
     newChannels,
     backupCount: backupSet.size,
-    backupPaths: [],
-    removedCount: plan.removed.length,
+    backupPaths: backupTarPath === null ? [] : [backupTarPath],
+    removedCount: decision.remove.size,
     pruned: options.prune === true,
     statePath: stateFile(target),
     modifiedCount: plan.modified.length,
     addedCount: plan.added.length,
+    adoptedCount: decision.adopt.size,
+    keptCount: keptInteractive,
+    editedCount: decision.editResults.length,
   });
+  if (keptInteractive > 0) {
+    logger.warn(
+      `kept ${keptInteractive} user modification(s) — they will reappear in next upgrade's diff`,
+    );
+  }
 }
 
 async function runNpmInstall(cwd: string): Promise<void> {
@@ -301,6 +502,12 @@ interface Summary {
   statePath: string;
   modifiedCount: number;
   addedCount: number;
+  /** Number of files whose content was adopted from assets this run. */
+  adoptedCount: number;
+  /** Number of files the user explicitly chose to keep (interactive + --prune-deleted kept). */
+  keptCount: number;
+  /** Number of files the user edited in $EDITOR and wrote back. */
+  editedCount: number;
 }
 
 function printSummary(s: Summary): void {
@@ -309,6 +516,7 @@ function printSummary(s: Summary): void {
   if (s.newChannels.entire) parts.push("entire");
   logger.info(`Channels: ${parts.join(" + ")}`);
   logger.info(`Modified: ${s.modifiedCount}, added: ${s.addedCount}`);
+  logger.info(`Adopted: ${s.adoptedCount}, kept: ${s.keptCount}, edited: ${s.editedCount}`);
   if (s.removedCount > 0) {
     if (s.pruned) {
       logger.info(`Removed: ${s.removedCount} (pruned)`);
@@ -318,6 +526,7 @@ function printSummary(s: Summary): void {
   }
   if (s.backupCount > 0) {
     logger.info(`Backup: ${s.backupCount} file(s) archived`);
+    for (const p of s.backupPaths) logger.info(`  ${p}`);
   }
   logger.info(`State: ${s.statePath}`);
   logger.success("upgrade complete");

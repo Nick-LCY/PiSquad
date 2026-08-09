@@ -29,6 +29,18 @@ export interface PkgInclude {
   pkgSubPath: string;
   /** Matching subtree inside the install target, e.g. ".pi" or "docs". */
   targetSubPath: string;
+  /**
+   * When true, files in this include are eligible for the per-file interactive
+   * prompts added by `pisquad upgrade`. False (or unset) means the upgrader
+   * treats the include as managed territory — files are overwritten / backed
+   * up automatically without user confirmation.
+   *
+   * Used by the upgrade decision layer (`src/upgrade/decision.ts`) to
+   * distinguish user-editable content (docs, agents, skills) from extension
+   * code (subagent / wikilink-lint / codegraph / entire), which is owned by
+   * the package and never presented for per-file adoption decisions.
+   */
+  interactive?: boolean;
 }
 
 export interface DiffTreeOptions {

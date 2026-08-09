@@ -27,7 +27,7 @@ pi-squad 的可执行文件 `pisquad` 目前是仓库根一个 152 行的单文�
 - **不做向后兼容 / 迁移工具**：旧 bash 安装的项目无 state.json，升级路径不存在；用户需重新 `pisquad install`
 - **不做 ink / blessed 全屏 TUI**：对一次性安装流程属于过度设计，本期只做命令行提示
 - **本期不做 `pisquad restore` 子命令**：备份文件先支持手工 `tar xzf` 解压恢复；restore 子命令留待后续
-- **`assets/docs/` 与仓库根 `docs/` 的自动同步脚本本期不做**：保持手工约定（人在改 `docs/` 时记得同步到 `assets/docs/`）
+- **`assets/docs/` 与仓库根 `docs/` 保持独立**：`assets/docs/` 是通用模板骨架，`docs/` 是项目自身文档库；不引入同步机制
 - **不在 npm 包里塞 README / Wiki / changelog 之外的额外文件**：包体只装构建产物 + assets + 必要的元信息
 
 ## 方案
@@ -72,6 +72,12 @@ pi-squad 的可执行文件 `pisquad` 目前是仓库根一个 152 行的单文�
 3. 包内有但目标里没有的 → 默认**保留**（保守），`--prune` 才删
 4. **docs/ 子树**纳入同一套 diff 流程（`assets/docs/` ↔ `<target>/docs/`），docs 是消费者高频修改区，保护最重要
 
+**管理区 / 交互区拆分（0.1.1 之后追加，见 ADR [[architecture/decisions/0003-interactive-upgrade.md]]）**：
+
+- **交互区**（`docs/**`、`.pi/agents/**`、`.pi/skills/**`，用户语义内容、全部 .md）走决策层：modified 选 `[A]dopt` / `[K]eep` / `[E]dit`；added 选 `[A]dopt` / `[K]eep`；removed 仅 `--prune` 时进 prompt
+- **管理区**（`.pi/extensions/**`，TS 代码）保持自动覆盖 + 备份，不受 `interactive` 标志影响
+- 范围划分用 `PkgInclude.interactive?: boolean` 标签显式声明（向后兼容，未标注视为 false），不用扩展名自动判
+
 旧版已安装的项目（无 state.json）走 `pisquad install` 会被拒绝对覆盖式安装，提示走 `pisquad upgrade`——但旧版无 state.json，`upgrade` 又会因 state 缺失报错。因此**结论：旧项目必须重新 install**（见非目标第 1 条）。
 
 ### 7. 交互 vs 非交互
@@ -81,6 +87,8 @@ pi-squad 的可执行文件 `pisquad` 目前是仓库根一个 152 行的单文�
 | 交互 | 有 tty + 用户未指定 flag | `@inquirer/prompts` checkbox 选 codegraph / entire，core 锁死全装 |
 | 非交互 | `--yes` / `--with a,b` / `--without a,b` / `--all` / 环境变量 `PISQUAD_WITH` `PISQUAD_WITHOUT` / 无 tty | 跳过 prompt，按既定规则决策 |
 | 无 tty 默认 | 自动检测 | **只装 core**，退出码 0，**不再 EOF 卡死** |
+| upgrade 交互（0.1.1 之后） | 有 tty + 用户未指定 `--interactive` / `--no-interactive` | 决策层逐文件询问交互区文件；modified 默认 keep（保守保护本地修改）；支持批量快捷键「剩余全部采用/保留」 |
+| upgrade 非交互（0.1.1 之后） | `--interactive` 显式 / `--no-interactive` / 无 tty / `CI=true` | 交互区退化为「全部采用新 + 备份」；管理区照旧自动覆盖；`exit 0` 不卡死；`--interactive` 在无 tty 时 warn 提示已退化 |
 
 `--yes` 与 `--with/--without/--all` 的优先级在 `src/lib/env.ts` 里定义一个决策表。
 
