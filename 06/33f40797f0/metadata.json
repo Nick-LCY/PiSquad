@@ -1,0 +1,45 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "0633f40797f0",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 16,
+  "files_touched": [
+    "docs/architecture/decisions/0001-pisquad-cli.md",
+    "docs/architecture/decisions/0003-interactive-upgrade.md",
+    "docs/architecture/decisions/README.md",
+    "docs/architecture/overview.md",
+    "docs/conventions/install-state.md",
+    "docs/current-state.md",
+    "docs/prds/pisquad-cli.md",
+    "docs/tasks/pisquad-cli/15-interactive-upgrade.md",
+    "package-lock.json",
+    "package.json",
+    "src/commands/upgrade.ts",
+    "src/lib/diff.ts",
+    "src/main.ts",
+    "src/upgrade/decision-defaults.ts",
+    "src/upgrade/decision.ts",
+    "test/upgrade/decision.test.ts",
+    "test/upgrade/diff-display.test.ts",
+    "test/upgrade/integration.test.ts",
+    "tsconfig.test.json",
+    "tsup.config.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/06/33f40797f0/0/metadata.json",
+      "transcript": "/06/33f40797f0/0/full.jsonl",
+      "compact_transcript": "/06/33f40797f0/0/transcript.jsonl",
+      "content_hash": "/06/33f40797f0/0/content_hash.txt",
+      "prompt": "/06/33f40797f0/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 161337,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 2724160,
+    "output_tokens": 106640,
+    "api_call_count": 37
+  }
+}
