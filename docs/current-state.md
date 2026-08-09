@@ -12,7 +12,7 @@ pi-squad 已基本成型、可用：多 Agent 协作、文档驱动、会话可�
 - **Skills（2）**：`project-docs`（文档库入口）、`workflow`（分工铁律）
 - **Extensions（4）**：`subagent`（隔离委派）、`codegraph`（8 个代码图查询工具）、`entire`（会话事件桥接）、`wikilink-lint`（docs 链接硬约束）
 - **docs 模板库**：结构即导航 + 渐进式披露的通用骨架
-- **pisquad CLI**：npm 全局包，提供 `install` / `upgrade` / `version` / `help`；保留极简 bash bootstrap 兼容 `curl | bash` 入口
+- **pisquad CLI**（已发布 `@nicklin/pisquad@0.1.1`）：npm 全局包，提供 `install` / `upgrade` / `version` / `help`；upgrade 含 docs 在内的 sha256 diff + tar.gz 备份；self-update 前比较 registry 版本，已是最新则跳过；保留极简 bash bootstrap 兼容 `curl | bash`
 - **双语 README + MIT license**
 
 ## 活跃需求
@@ -58,6 +58,8 @@ pi-squad 已基本成型、可用：多 Agent 协作、文档驱动、会话可�
 
 ## 最近变更
 
+- 发布 `@nicklin/pisquad@0.1.1`：修复 upgrade 的 self-update 死循环（0.1.0 在全局已是最新时无限 `npm i -g` 并提示重跑）；改为 self-update 前 `npm view` 比版本，已是最新则跳过、继续 project 同步
+- 包名改 scoped `@nicklin/pisquad`：unscoped `pisquad` 因 npm 包名相似性规则（与现有 `pi-squad` 冲突）被拒，改 scoped；bin 命令名保持 `pisquad` 不变
 - pisquad CLI 化完成：14 个 task 全部 done，`npm i -g @nicklin/pisquad` 主路径 + `curl | bash` 兼容入口，`pisquad upgrade` 配 docs 备份恢复
 - 文档全面同步：`docs/architecture/overview.md` 反映 CLI 化；`assets/docs/` 镜像关键文档（overview / decisions/0001 / conventions/install-state），消费者模板视角与仓库内开发进度解耦
 - 全面 e2e 验证通过：self-install / install --all / upgrade 备份 docs/README.md / 无 tty exit 0 / `npm pack --dry-run` 内容清单符合预期

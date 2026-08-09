@@ -104,14 +104,14 @@ pisquad help
 
 ## 验收标准
 
-- [ ] `npm i -g @nicklin/pisquad` 后 `pisquad --version` / `pisquad --help` 正常输出
-- [ ] `pisquad install` 交互式能用方向键勾选 codegraph / entire，core 全装
-- [ ] `pisquad install --yes --with codegraph,entire <dir>` 在无 tty 子进程中退出码 0、**不卡死**
-- [ ] entire 勾选后，目标 `.pi/extensions/entire/index.ts` 实际存在（bug 已修复）
-- [ ] `pisquad upgrade` 在已安装项目：检测到本地修改 → 生成 tar.gz 备份 → 覆盖 → 打印提示；state.json 前进
-- [ ] **`docs/` 的修改也被 diff + 备份保护**（修改 `<dir>/docs/README.md` 后 upgrade 触发备份）
-- [ ] `npm pack --dry-run` 确认包内含 `dist/` `assets/` `README*.md` `LICENSE` `pisquad`，**不含** `src/` `node_modules/` `.pi/` `docs/`
-- [ ] `curl | bash` bootstrap 在 node 就绪时正确转发到全局 `pisquad` 或 `npx @nicklin/pisquad@latest`
-- [ ] 旧项目（无 state.json）执行 `pisquad upgrade` 报清晰错误并退出非零码，**不写迁移工具**
+- [x] `npm i -g @nicklin/pisquad` 后 `pisquad --version` / `pisquad --help` 正常输出
+- [x] `pisquad install` 交互式能用方向键勾选 codegraph / entire，core 全装
+- [x] `pisquad install --yes --with codegraph,entire <dir>` 在无 tty 子进程中退出码 0、**不卡死**
+- [x] entire 勾选后，目标 `.pi/extensions/entire/index.ts` 实际存在（bug 已修复）
+- [x] `pisquad upgrade` 在已安装项目：检测到本地修改 → 生成 tar.gz 备份 → 覆盖 → 打印提示；state.json 前进
+- [x] **`docs/` 的修改也被 diff + 备份保护**（修改 `<dir>/docs/README.md` 后 upgrade 触发备份）
+- [x] `npm pack --dry-run` 确认包内含 `dist/` `assets/` `README*.md` `LICENSE` `pisquad`，**不含** `src/` `node_modules/` `.pi/` `docs/`
+- [x] `curl | bash` bootstrap 在 node 就绪时正确转发到全局 `pisquad` 或 `npx @nicklin/pisquad@latest`
+- [x] 旧项目（无 state.json）执行 `pisquad upgrade` 报清晰错误并退出非零码，**不写迁移工具**
 
 相关文档：[[architecture/overview.md]]，架构决策 [[architecture/decisions/0001-pisquad-cli.md]]，约定 [[conventions/install-state.md]]，任务列表 `tasks/pisquad-cli/`，看板 [[current-state.md]]。
