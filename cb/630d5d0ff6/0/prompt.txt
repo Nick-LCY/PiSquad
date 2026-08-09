@@ -198,3 +198,152 @@ Task: 检查 `docs/` 目录下所有文档，找出提到以下内容的地方�
 - docs/architecture/overview.md
 
 对于每个找到的段落，返回完整原文和所在文件+行号，判断是否与当前实现一致。
+
+---
+
+可以，更新完之后一起commit。
+
+---
+
+Task: 更新文档以反映当前实现。按优先级处理。
+
+## P0：修正与当前实现冲突的陈述
+
+### 1. `docs/current-state.md`
+
+a) 第 72 行附近，把：
+```
+无 tty / CI / `curl | bash` 退化为 all-adopt+备份
+```
+改为：
+```
+无 tty / CI 退化为 all-adopt+备份
+```
+
+b) 第 75 行附近，把：
+```
+`npm i -g @nicklin/pisquad` 主路径 + `curl | bash` 兼容入口
+```
+改为：
+```
+`npm i -g @nicklin/pisquad` 主路径
+```
+
+c) 第 80 行附近，删除：
+```
+- 支持 `curl | bash` 一键安装 `pisquad`
+```
+
+d) 第 15 行附近（已就绪能力中），把之前更新后的版本标注确认正确（应该是 `@nicklin/pisquad@0.2.1`）
+
+e) 在「最近变更」段**最前面**新增一条 0.2.1 的变更记录：
+```
+- 发布 `@nicklin/pisquad@0.2.1`：取消 edit 二次确认（`waitForUserInput: false`），editor 默认内容改为 git-merge conflict marker 格式（`<<<<<<< current` / `=======` / `>>>>>>> incoming`）并增加 validate 拦截未清除标记，postfix 动态化（扩展名/dotfile/.txt 回退）；`writeState()` 自动创建 `.pi/.pisquad/.gitignore` 排除 `backups/`；移除 bash bootstrap 脚本及 `curl | bash` 安装入口
+```
+
+### 2. `docs/architecture/decisions/0001-pisquad-cli.md`
+
+a) 第 27-31 行（决策 3），在段落后追加标注：
+```
+> **⚠️ 已废弃（0.2.1）**：bash bootstrap 已在 0.2.1 移除。当前唯一安装入口为 `npm i -g @nicklin/pisquad`。`curl | bash` 不再受支持。
+```
+
+b) 第 47-61 行（仓库/发布/用户层面），将「仓库根 `pisquad` 文件改写为极简 bash bootstrap（仍可执行）」改为「~~仓库根 `pisquad` 文件改写为极简 bash bootstrap（仍可执行）~~（0.2.1 已移除）」。
+
+将「发布物包括构建产物 `dist/`、内嵌 `assets/`、README、LICENSE、`pisquad` 脚本」改为「发布物包括构建产物 `dist/`、内嵌 `assets/`、README、LICENSE」。
+
+将「新项目走 `npm i -g @nicklin/pisquad` 或 `curl | bash` 均可」改为「新项目走 `npm i -g @nicklin/pisquad`」。
+
+### 3. `docs/prds/pisquad-cli.md`
+
+a) 第 19 行（目标中），把：
+```
+同时保留一个极简 bash bootstrap 维持 `curl | bash` 入口
+```
+改为：
+```
+~~同时保留一个极简 bash bootstrap 维持 `curl | bash` 入口~~（0.2.1 已移除，仅保留 npm 入口）
+```
+
+b) 第 39 行（兼容入口），把整段改为：
+```
+**兼容入口**：~~仓库根保留一个极简 bash 脚本 `pisquad`，检测到 node 后转发到 `pisquad`（已全局安装）或 `npx @nicklin/pisquad@latest`。这样 `curl ... | bash` 形式仍可用，且后续不再用 curl 拉 tarball。~~（0.2.1 已移除）
+```
+
+c) 第 121-122 行（验收标准），把：
+```
+- [x] `npm pack --dry-run` 确认包内含 `dist/` `assets/` `README*.md` `LICENSE` `pisquad`，**不含** `src/` `node_modules/` `.pi/` `docs/`
+- [x] `curl | bash` bootstrap 在 node 就绪时正确转发到全局 `pisquad` 或 `npx @nicklin/pisquad@latest`
+```
+改为：
+```
+- [x] `npm pack --dry-run` 确认包内含 `dist/` `assets/` `README*.md` `LICENSE`，**不含** `src/` `node_modules/` `.pi/` `docs/`
+- [x] ~~`curl | bash` bootstrap 在 node 就绪时正确转发到全局 `pisquad` 或 `npx @nicklin/pisquad@latest`~~（0.2.1 已移除）
+```
+
+## P1：补齐当前实现细节
+
+### 4. `docs/architecture/decisions/0003-interactive-upgrade.md`
+
+在 §4（"merge 走 `$EDITOR` 方案 A"，约第 57-63 行）段落后追加：
+
+```
+> **0.2.1 更新**：editor 行为已增强：
+> - 选择 Edit 后直接启动 `$EDITOR`（`waitForUserInput: false`），无需再次按 Enter。
+> - editor buffer 预填 git-merge conflict marker 格式，同时展示当前版本和新版本：
+>   ```
+>   <<<<<<< current (your version)
+>   [当前内容]
+>   =======
+>   [新版本内容]
+>   >>>>>>> incoming (new version)
+>   ```
+> - 保存时若仍残留 `<<<<<<<` 或 `>>>>>>>` 标记，validate 会拦截并提示重新编辑（`validationFailureMode: "keep"` 保留用户输入）。
+> - `postfix` 根据原文件扩展名动态生成（`.ts` → `.ts`，`.gitignore` → `.gitignore`，无扩展名 → `.txt`），确保 `$EDITOR` 语法高亮正确。
+```
+
+### 5. `docs/conventions/install-state.md`
+
+a) 在「范围」段（约第 6-12 行），把：
+```
+它包含两类内容：
+
+- `state.json` — 安装状态的唯一权威记录
+- `backups/` — upgrade 覆盖前的备份归档
+
+这两类都属于**运行时产物**，归 pisquad 自己管，不属于用户项目内容。
+```
+改为：
+```
+它包含三类内容：
+
+- `state.json` — 安装状态的唯一权威记录
+- `backups/` — upgrade 覆盖前的备份归档
+- `.gitignore` — 嵌套忽略规则（内容 `backups/`），作为根 `.gitignore` 之外的第二层防御
+
+这三类都属于**运行时产物**，归 pisquad 自己管，不属于用户项目内容。
+```
+
+b) 在「与 git 协作」段（约第 89-97 行）后追加：
+```
+> **嵌套 `.gitignore`（0.2.1）**：`writeState()` 会在 `.pi/.pisquad/.gitignore` 写入 `backups/`。该文件由 pisquad 自动管理，不存在时创建、已存在时不覆盖。根 `.gitignore` 仍使用 `.pi/.pisquad/` 忽略整个目录；嵌套规则作为防御深度，确保即便根规则被修改，backups 也不会被 git 追踪。
+```
+
+### 6. `docs/current-state.md`
+
+在 `docs/architecture/overview.md` 的变更描述（约第 13-15 行）中，确认之前对 `curl | bash` 的清理已正确反映。
+
+---
+
+## 收尾
+- 运行 `npm test` 确认测试通过（文档修改不影响）
+- 先 `git add -A`，然后 commit，信息：
+```
+docs: 同步文档至 0.2.1 现状
+
+- 移除所有 curl|bash 过时引用（current-state / 0001 ADR / PRD）
+- 补齐 editor conflict-marker + 自动 launch + validate 行为
+- install-state 增加嵌套 .gitignore 说明
+- current-state 新增 0.2.1 变更记录
+```
+不要 push。
