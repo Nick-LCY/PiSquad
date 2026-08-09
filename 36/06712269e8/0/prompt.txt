@@ -1,0 +1,56 @@
+都可以了，文档有没有需要更新的？
+
+---
+
+Task: ## 任务：更新文档以反映发布后的最终态
+
+pisquad CLI 已发布到 npm（@nicklin/pisquad，当前 0.1.1）。发布周期后又经历了：包名改 scoped（npm 相似性规则）、self-update 死循环 bug 修复（0.1.0→0.1.1）、真实发版。文档需同步。先 `read` 相关文件确认现状：`docs/current-state.md`、`docs/architecture/decisions/0001-pisquad-cli.md`、`docs/architecture/decisions/README.md`、`docs/prds/pisquad-cli.md`。
+
+### 1. `docs/current-state.md`
+
+**"最近变更"段**（最新在顶部，加 2 条，保留现有）：
+- `发布 @nicklin/pisquad 0.1.1：修复 upgrade 的 self-update 死循环（0.1.0 在全局已是最新时无限 npm i -g 并提示重跑）；改为 self-update 前 npm view 比版本，已是最新则跳过、继续 project 同步`
+- `包名改 scoped @nicklin/pisquad：unscoped pisquad 因 npm 包名相似性规则（与现有 pi-squad 冲突）被拒，改 scoped；bin 命令名保持 pisquad 不变`
+
+**"已就绪能力"段的 pisquad CLI 行**：补版本与机制，改为类似：
+`**pisquad CLI**（已发布 `@nicklin/pisquad@0.1.1`）：npm 全局包，提供 install / upgrade / version / help；upgrade 含 docs 在内的 sha256 diff + tar.gz 备份；self-update 前比较 registry 版本，已是最新则跳过；保留极简 bash bootstrap 兼容 curl | bash`
+
+### 2. 新增 ADR `docs/architecture/decisions/0002-self-update-version-check.md`
+
+按 ADR 模板（日期/状态:已接受/背景/决策/影响），内容框架：
+
+- **标题**：`0002. self-update 前比较版本，避免重跑死循环`
+- **日期**：2026-08
+- **状态**：已接受
+- **背景**：0.1.0 的 `selfUpdate` 确认全局安装后无条件跑 `npm i -g @nicklin/pisquad@latest`，即使本地已是最新版 npm 也返回成功（exit 0），于是 `selfUpdate` 总返回 `updated:true`，`upgrade` 据此提示"Re-run"——用户重跑又触发 self-update，**陷入死循环**。该 bug 只在包真发布到 registry 后（`npm i -g` 成功）才暴露，发布前的 e2e（含 npm link）因 registry 无此包、npm i -g 直接失败而无法复现。
+- **决策**：`selfUpdate` 在跑 `npm i -g` **之前**先 `npm view @nicklin/pisquad version` 取 registry 最新版，与 `readCliVersion()` 比较，三分支：
+  1. registry 版本 == 当前版本（已是最新）→ log "already up to date"，返回 `updated:false`，upgrade **继续 project 同步**（死循环消除）
+  2. registry 版本 > 当前版本（有新版）→ 跑 `npm i -g`，返回 `updated:true`，upgrade 提示重跑（因进程内存仍是旧代码，需用新代码做同步）
+  3. `npm view` 失败（网络/离线）→ warn，返回 `updated:false`，继续同步（保守，宁可漏更新也不死循环）
+- **影响**：消除死循环；印证 CLI 版本与 assets 版本独立的设计价值（本次只修 CLI，`assets-version.txt` 仍 0.1.0，package.json 升 0.1.1）；未来维护 self-update 必须保留"先比版本"这一步
+
+并在 `docs/architecture/decisions/README.md` 的清单里加 0002（用 wikilink `[[architecture/decisions/0002-self-update-version-check.md]]`，注意目标文件先创建）。
+
+### 3. `docs/prds/pisquad-cli.md` 验收标准勾选
+
+把"## 验收标准"下的 9 条 `- [ ]` 全部改为 `- [x]`（都已满足并经验证）。
+
+### 4. `assets/docs/` 镜像
+
+- `assets/docs/architecture/decisions/0002-self-update-version-check.md`：从 docs/ 镜像（新建）
+- `assets/docs/architecture/decisions/README.md`：同步清单加 0002
+- `assets/docs/current-state.md`：**保持消费者模板视角，不镜像本仓库进度**（确认无 pisquad-cli 开发记录混入即可，不用改）
+
+### wikilink 注意
+- 新增 ADR 0002 后，凡引用它的 wikilink 要确保目标文件已先创建（先建 0002 文件，再在 README 清单/其它文档引用）
+- 表格内 wikilink 别名转义 `\|`
+- 严格遵守 conventions/README.md 的 wikilink 规范（仅指向 docs/ 内真实文件）
+
+### commit（单独一次，只含文档改动）
+`docs: sync post-release state, add ADR 0002 for self-update version check`
+
+### 报告
+- 改了哪些文件、新增了哪些
+- ADR 0002 的最终内容
+- wikilink 校验通过（无死链）
+- commit hash

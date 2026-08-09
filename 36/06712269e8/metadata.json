@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "3606712269e8",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "assets/docs/architecture/decisions/0002-self-update-version-check.md",
+    "assets/docs/architecture/decisions/README.md",
+    "docs/architecture/decisions/0002-self-update-version-check.md",
+    "docs/architecture/decisions/README.md",
+    "docs/current-state.md",
+    "docs/prds/pisquad-cli.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/36/06712269e8/0/metadata.json",
+      "transcript": "/36/06712269e8/0/full.jsonl",
+      "compact_transcript": "/36/06712269e8/0/transcript.jsonl",
+      "content_hash": "/36/06712269e8/0/content_hash.txt",
+      "prompt": "/36/06712269e8/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 234466,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 231360,
+    "output_tokens": 7055,
+    "api_call_count": 2
+  }
+}
