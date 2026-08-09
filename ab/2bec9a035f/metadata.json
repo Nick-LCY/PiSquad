@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "ab2bec9a035f",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "assets/.pi/.pisquad/.gitignore",
+    "src/lib/version.ts",
+    "src/upgrade/decision-defaults.ts",
+    "test/upgrade/decision-defaults.test.ts",
+    "test/upgrade/integration.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ab/2bec9a035f/0/metadata.json",
+      "transcript": "/ab/2bec9a035f/0/full.jsonl",
+      "compact_transcript": "/ab/2bec9a035f/0/transcript.jsonl",
+      "content_hash": "/ab/2bec9a035f/0/content_hash.txt",
+      "prompt": "/ab/2bec9a035f/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 32344,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 855936,
+    "output_tokens": 19775,
+    "api_call_count": 32
+  }
+}
