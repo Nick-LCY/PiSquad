@@ -10,9 +10,9 @@ pi-squad 已基本成型、可用：多 Agent 协作、文档驱动、会话可�
 
 - **Agents（5）**：scout / planner / worker / reviewer / archivist，权限隔离、上下文独立
 - **Skills（2）**：`project-docs`（文档库入口）、`workflow`（分工铁律）
-- **Extensions（4）**：`subagent`（隔离委派）、`codegraph`（8 个代码图查询工具）、`entire`（会话事件桥接）、`wikilink-lint`（docs 链接硬约束）
+- **Extensions（5）**：`subagent`（隔离委派 + **idle 挂起裁决协议**：SIGSTOP 冻结整组 + inspect/resume/kill 互斥裁决）、`bash-guard`（`bash` 兜底 300s 默认超时，env `BASH_GUARD_DEFAULT_TIMEOUT_S` 可覆写，主/子 agent 同等生效）、`codegraph`（8 个代码图查询工具）、`entire`（会话事件桥接）、`wikilink-lint`（docs 链接硬约束）。两层时间防御：bash 超时（≤300s）与 idle 挂起（默认 600s）覆盖不同故障模式；详见 ADR [[architecture/decisions/0004-subagent-suspension-arbitration.md]]
 - **docs 模板库**：结构即导航 + 渐进式披露的通用骨架
-- **pisquad CLI**（已发布 `@nicklin/pisquad@0.2.1`）：npm 全局包，提供 `install` / `upgrade` / `version` / `help`；upgrade 含 docs 在内的 sha256 diff + tar.gz 备份；self-update 前比较 registry 版本，已是最新则跳过
+- **pisquad CLI**（已发布 `@nicklin/pisquad@0.3.0`）：npm 全局包，提供 `install` / `upgrade` / `version` / `help`；upgrade 含 docs 在内的 sha256 diff + tar.gz 备份；self-update 前比较 registry 版本，已是最新则跳过
 - **pisquad upgrade 交互式决策**（0.1.1 之后）：按目录白名单拆分交互区（`docs/**`、`.pi/agents/**`、`.pi/skills/**`，走决策层逐文件询问 adopt/keep/edit）与管理区（`.pi/extensions/**`，保持自动覆盖+备份）；无 tty / CI 退化为 all-adopt+备份；详见 ADR [[architecture/decisions/0003-interactive-upgrade.md]]
 - **双语 README + MIT license**
 
@@ -65,6 +65,9 @@ pi-squad 已基本成型、可用：多 Agent 协作、文档驱动、会话可�
 
 ## 最近变更
 
+- 发布 `@nicklin/pisquad@0.3.0`：新增 `bash-guard` 扩展（`bash` 兜底 300s 默认超时 + 提示面三件套：`tool_result` 事实追加 / 子 agent systemPrompt Runtime note / `SUBAGENT_DESCRIPTION` 委派提示），`subagent` 新增 idle 挂起裁决协议（SIGSTOP 冻结整组 + `inspect` / `resume` / `kill` 互斥裁决 + 深树信号覆盖 `setsid` 孙进程）；测试 140/140（10 个协议 e2e 场景 + 18 个 bash-guard 提示面），详见 ADR [[architecture/decisions/0004-subagent-suspension-arbitration.md]]
+- bash 超时提示三件套：补齐「默认值被认知」——背景是 pi 内置 `bash` 参数描述声称 `no default timeout` 与 bash-guard 实际注入的 300s 默认值矛盾。修复三面：①bash-guard `tool_result` 仅当「注入过默认值 && isError && 文本含 timeout 迹象」时向 `content` 追加一行事实说明（指出默认值已生效、如何显式传 `timeout`），partial patch 只动 `content`，`isError`/`details`/`usage` 不动，call id 立即清出 map 不泄漏；②subagent 给每个子 agent 的 systemPrompt 追加 Runtime note（默认值来自 `resolveDefaultTimeoutS()`，与 `BASH_GUARD_DEFAULT_TIMEOUT_S` env 覆写一致），无 systemPrompt 的 agent 也生成只含说明的 tmp 文件；③`SUBAGENT_DESCRIPTION` 补一句——委派长命令时主 agent 应指示子 agent 显式传 `timeout`。**不做** bash 工具全量覆盖：`getAllTools()` 无 `execute` 句柄、无法安全委托执行，partial-patch 契约只覆盖 `tool_result`，三面已足以让默认值得以被感知。测试 +18（新增 `test/subagent/bash-guard.test.ts`），总数 122 → 140。详见 ADR [[architecture/decisions/0004-subagent-suspension-arbitration.md]] §1「提示面」
+- subagent 挂起裁决协议 + bash 默认超时：新增 `bash-guard` 扩展（兜底 300s 默认超时，env `BASH_GUARD_DEFAULT_TIMEOUT_S` 覆写，显式传值原样尊重）；`subagent` 新增 idle 挂起裁决（`SUBAGENT_IDLE_TIMEOUT_MS=600s`，默认路径下 600>300 保证 idle 永不被误触发）——stdout 无 NDJSON 事件 → SIGSTOP 冻结进程组 → 工具提前返回纯事实快照（`status:idle_suspended` + `suspensionId` + `idleMs` + `runningCommand` + `requestedTimeout` + `tail`，故意不设 `isError`、无 hint），由主 agent 用 `inspect` / `resume` / `kill`（互斥、`suspensionId` 寻址）裁决；AbortSignal 挂起中不响应、父进程 exit/SIGINT/SIGTERM best-effort 清扫、parallel 多挂起按 id 寻址不按下标；**深树信号覆盖**：孙进程跨 pgid（`setsid` / `nohup` / `disown`）的冻结 / 解冻 / kill 补全（`collectDescendantPids` 走 `/proc/<pid>/stat` ppid 映射 BFS 收集下游，组级信号后按叶→ 根顺序逐个信号；live E2E 验证孙 STAT=T 冻结 / 解冻 / 死透，孤儿归零）；107 项测试全过（9 个协议 e2e 场景），fake pi shim 无 LLM 依赖；Windows 降级（无 SIGSTOP → 看门狗直接杀整树不进裁决）；开发事故沉淀：kill 后 close 事件曾被误读为 chain 续跑信号，修复建立三层防线（Jest 120s + runDriver 60s 杀进程组 + afterEach 扫描残留）。详见 ADR [[architecture/decisions/0004-subagent-suspension-arbitration.md]]
 - 发布 `@nicklin/pisquad@0.2.1`：取消 edit 二次确认（`waitForUserInput: false`），editor 默认内容改为 git-merge conflict marker 格式（`<<<<<<< current` / `=======` / `>>>>>>> incoming`）并增加 validate 拦截未清除标记，postfix 动态化（扩展名/dotfile/.txt 回退）；`writeState()` 自动创建 `.pi/.pisquad/.gitignore` 排除 `backups/`；移除 bash bootstrap 脚本及 `curl | bash` 安装入口
 - 发布 `@nicklin/pisquad@0.2.0`：subagent 扩展新增 `tools_deny` 黑名单模式（agent 不写 `tools:` 白名单时默认获得全部工具，只排除 `tools_deny` 列出的）和 `tools:` 前缀通配符支持（如 `codegraph_*`）；scout / planner / reviewer 改用 `tools_deny: write, edit` 自动获得所有 codegraph 工具；`subagent` 工具默认禁止递归委派；修复空集回退全工具提权漏洞；planner 回归修复（旧配置无 bash，新 deny 补上）。升级路径：`pisquad upgrade` 交互式逐文件 adopt/keep/edit
 - TUI 统一英文（新增 [[conventions/tui-language.md]] 约定）+ per-file diff 着色（`+` 绿 / `-` 红 / hunk `@@` 青 / 文件头 `+++`/`---` 灰，header 仍走 `logger.info` cyan 与原行为对齐）

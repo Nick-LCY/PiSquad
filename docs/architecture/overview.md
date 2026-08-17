@@ -19,7 +19,7 @@ pi-squad 是一套基于 pi coding agent 的可复用多 Agent、文档驱动开
 
 | 层 | 角色 | 所在目录 |
 |---|---|---|
-| Extensions | 能力扩展：subagent / codegraph / entire / wikilink-lint | `assets/.pi/extensions/` |
+| Extensions | 能力扩展：subagent / bash-guard / codegraph / entire / wikilink-lint | `assets/.pi/extensions/` |
 | Skills | 约定注入：project-docs / workflow | `assets/.pi/skills/` |
 | Agents | 专职分工：scout / planner / worker / reviewer / archivist | `assets/.pi/agents/` |
 | Docs | 文档驱动：结构即导航 + 渐进式披露的模板骨架 | `assets/docs/` |
@@ -66,7 +66,8 @@ pi-squad 是一套基于 pi coding agent 的可复用多 Agent、文档驱动开
 
 | 扩展 | 作用 |
 |---|---|
-| subagent | 把任务委派给隔离上下文的子 pi 进程（single / parallel / chain 三种模式） |
+| subagent | 把任务委派给隔离上下文的子 pi 进程（single / parallel / chain 三种模式）；内置 **idle 挂起裁决协议**（SIGSTOP 冻结整组 + inspect / resume / kill 互斥裁决），见 ADR [[architecture/decisions/0004-subagent-suspension-arbitration.md]] |
+| bash-guard | 订阅 tool_call，给 `bash` 调用兜底 300s 默认超时（env `BASH_GUARD_DEFAULT_TIMEOUT_S` 可覆写；显式传值原样尊重不封顶）；对主 agent 与子 agent 的 `bash` 同等生效 |
 | codegraph | 包装 codegraph CLI，注册 8 个代码图查询工具（explore / node / query / status / files / callers / callees / impact） |
 | entire | 把 pi 会话事件桥接到外部 Entire CLI（由 Entire 负责 checkpoint / rewind），并给 `bash` 注入 `GIT_TERMINAL_PROMPT=0` 防止交互卡死 |
 | wikilink-lint | 订阅 tool_call，对 `docs/**/*.md` 的 write / edit 做硬阻断：发现指向 docs 外或目标不存在的 wikilink 即拒绝写入 |
@@ -79,6 +80,7 @@ pi-squad 是一套基于 pi coding agent 的可复用多 Agent、文档驱动开
 - **wikilink 硬约束**：docs 内文档互引一律用 wikilink，且仅指向 docs/ 内真实存在的文件，由 `wikilink-lint` 自动校验（越界或失效即拒绝写入）
 - **pisquad 已从 bash 安装器升级为 npm CLI**：见 [[architecture/decisions/0001-pisquad-cli.md]]；分发、版本管理与升级路径全部迁移到 npm 包形式，不再提供 `curl | bash` 入口
 - **upgrade 引入交互式决策层**：见 [[architecture/decisions/0003-interactive-upgrade.md]]；按目录白名单拆交互区（`docs/**` + `.pi/agents/**` + `.pi/skills/**`）与管理区（`.pi/extensions/**`），交互区走决策层逐文件询问 adopt/keep/edit，merge 走 `$EDITOR` 方案 A（不做三方 merge base）；非交互 / 无 tty 退化为 all-adopt+备份
+- **subagent 挂起裁决协议 + bash 默认超时**：见 [[architecture/decisions/0004-subagent-suspension-arbitration.md]]；两层独立结构——`bash-guard` 给所有 `bash` 调用兜底 300s 默认超时（默认路径下先于 idle 挂起触发），`subagent` 用 SIGSTOP 冻结空闲进程组并把裁决权（inspect/resume/kill 互斥）交回主 agent；故意只返回事实快照（无 hint、无 isError），Windows 降级为直接杀整树
 
 ---
 
