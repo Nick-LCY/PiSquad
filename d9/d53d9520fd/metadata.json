@@ -1,0 +1,38 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "d9d53d9520fd",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 18,
+  "files_touched": [
+    "assets/.pi/extensions/bash-guard/index.ts",
+    "assets/.pi/extensions/subagent/index.ts",
+    "assets/.pi/extensions/subagent/suspensions.ts",
+    "package.json",
+    "test/subagent/_shim/driver.ts",
+    "test/subagent/_shim/pi-shim-multi.sh",
+    "test/subagent/_shim/pi-shim.sh",
+    "test/subagent/arbitration.e2e.test.ts",
+    "test/subagent/bash-guard.test.ts",
+    "test/subagent/details.test.ts",
+    "test/subagent/renderResult.test.ts",
+    "test/subagent/suspensions.test.ts",
+    "tsconfig.test-runtime.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/d9/d53d9520fd/0/metadata.json",
+      "transcript": "/d9/d53d9520fd/0/full.jsonl",
+      "compact_transcript": "/d9/d53d9520fd/0/transcript.jsonl",
+      "content_hash": "/d9/d53d9520fd/0/content_hash.txt",
+      "prompt": "/d9/d53d9520fd/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1503814,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 4643200,
+    "output_tokens": 118156,
+    "api_call_count": 85
+  }
+}

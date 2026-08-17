@@ -1,0 +1,275 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "d9d53d9520fd",
+  "session_id": "01a0080c-f2d2-7652-992f-e3530079075b",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-17T04:58:17.395093442Z",
+  "branch": "main",
+  "checkpoints_count": 18,
+  "save_step_count": 11,
+  "files_touched": [
+    "assets/.pi/extensions/bash-guard/index.ts",
+    "assets/.pi/extensions/subagent/index.ts",
+    "assets/.pi/extensions/subagent/suspensions.ts",
+    "package.json",
+    "test/subagent/_shim/driver.ts",
+    "test/subagent/_shim/pi-shim-multi.sh",
+    "test/subagent/_shim/pi-shim.sh",
+    "test/subagent/arbitration.e2e.test.ts",
+    "test/subagent/bash-guard.test.ts",
+    "test/subagent/details.test.ts",
+    "test/subagent/renderResult.test.ts",
+    "test/subagent/suspensions.test.ts",
+    "tsconfig.test-runtime.json"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "803c867eb646",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 1503814,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 4643200,
+    "output_tokens": 118156,
+    "api_call_count": 85
+  },
+  "session_metrics": {
+    "turn_count": 18
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-17T04:58:17.040757963Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 32949,
+    "human_modified": 2810,
+    "human_removed": 0,
+    "total_committed": 32949,
+    "total_lines_changed": 36002,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 2206,
+      "user_lines_removed": 189,
+      "agent_lines_added": 1659,
+      "agent_lines_removed": 1,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 86,
+        ".pi/extensions/subagent/index.ts": 1554,
+        ".pi/extensions/subagent/suspensions.ts": 566
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 189
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 2206,
+      "user_lines_removed": 189,
+      "agent_lines_added": 1659,
+      "agent_lines_removed": 1,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 86,
+        ".pi/extensions/subagent/index.ts": 1554,
+        ".pi/extensions/subagent/suspensions.ts": 566
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 189
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 3004,
+      "user_lines_removed": 323,
+      "agent_lines_added": 4158,
+      "agent_lines_removed": 224,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 86,
+        ".pi/extensions/subagent/index.ts": 1499,
+        ".pi/extensions/subagent/suspensions.ts": 582,
+        "test/subagent/_shim/driver.ts": 380,
+        "test/subagent/_shim/pi-shim-multi.sh": 28,
+        "test/subagent/arbitration.e2e.test.ts": 429
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 220,
+        "test/subagent/_shim/driver.ts": 44,
+        "test/subagent/_shim/pi-shim-multi.sh": 1,
+        "test/subagent/arbitration.e2e.test.ts": 58
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 4059,
+      "user_lines_removed": 347,
+      "agent_lines_added": 4169,
+      "agent_lines_removed": 224,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 86,
+        ".pi/extensions/subagent/index.ts": 1510,
+        ".pi/extensions/subagent/suspensions.ts": 873,
+        "assets/.pi/extensions/subagent/suspensions.ts": 311,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 6,
+        "test/subagent/_shim/driver.ts": 577,
+        "test/subagent/_shim/pi-shim-multi.sh": 70,
+        "test/subagent/arbitration.e2e.test.ts": 544,
+        "test/subagent/suspensions.test.ts": 82
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 220,
+        "assets/.pi/extensions/subagent/suspensions.ts": 20,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 3,
+        "test/subagent/_shim/driver.ts": 44,
+        "test/subagent/_shim/pi-shim-multi.sh": 2,
+        "test/subagent/arbitration.e2e.test.ts": 58
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 4059,
+      "user_lines_removed": 347,
+      "agent_lines_added": 4169,
+      "agent_lines_removed": 224,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 86,
+        ".pi/extensions/subagent/index.ts": 1510,
+        ".pi/extensions/subagent/suspensions.ts": 873,
+        "assets/.pi/extensions/subagent/suspensions.ts": 311,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 6,
+        "test/subagent/_shim/driver.ts": 577,
+        "test/subagent/_shim/pi-shim-multi.sh": 70,
+        "test/subagent/arbitration.e2e.test.ts": 544,
+        "test/subagent/suspensions.test.ts": 82
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 220,
+        "assets/.pi/extensions/subagent/suspensions.ts": 20,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 3,
+        "test/subagent/_shim/driver.ts": 44,
+        "test/subagent/_shim/pi-shim-multi.sh": 2,
+        "test/subagent/arbitration.e2e.test.ts": 58
+      }
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 5297,
+      "user_lines_removed": 356,
+      "agent_lines_added": 4638,
+      "agent_lines_removed": 233,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 86,
+        ".pi/extensions/subagent/index.ts": 1979,
+        ".pi/extensions/subagent/suspensions.ts": 951,
+        "assets/.pi/extensions/subagent/suspensions.ts": 389,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 9,
+        "test/subagent/_shim/driver.ts": 745,
+        "test/subagent/_shim/pi-shim-multi.sh": 70,
+        "test/subagent/arbitration.e2e.test.ts": 690,
+        "test/subagent/suspensions.test.ts": 378
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 229,
+        "assets/.pi/extensions/subagent/suspensions.ts": 20,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 3,
+        "test/subagent/_shim/driver.ts": 44,
+        "test/subagent/_shim/pi-shim-multi.sh": 2,
+        "test/subagent/arbitration.e2e.test.ts": 58
+      }
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 5297,
+      "user_lines_removed": 356,
+      "agent_lines_added": 4638,
+      "agent_lines_removed": 233,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 86,
+        ".pi/extensions/subagent/index.ts": 1979,
+        ".pi/extensions/subagent/suspensions.ts": 951,
+        "assets/.pi/extensions/subagent/suspensions.ts": 389,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 9,
+        "test/subagent/_shim/driver.ts": 745,
+        "test/subagent/_shim/pi-shim-multi.sh": 70,
+        "test/subagent/arbitration.e2e.test.ts": 690,
+        "test/subagent/suspensions.test.ts": 378
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 229,
+        "assets/.pi/extensions/subagent/suspensions.ts": 20,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 3,
+        "test/subagent/_shim/driver.ts": 44,
+        "test/subagent/_shim/pi-shim-multi.sh": 2,
+        "test/subagent/arbitration.e2e.test.ts": 58
+      }
+    },
+    {
+      "checkpoint_number": 9,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 10,
+      "user_lines_added": 3016,
+      "user_lines_removed": 229,
+      "agent_lines_added": 6792,
+      "agent_lines_removed": 233,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 86,
+        ".pi/extensions/subagent/index.ts": 1979,
+        ".pi/extensions/subagent/suspensions.ts": 951
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 229
+      }
+    },
+    {
+      "checkpoint_number": 11,
+      "user_lines_added": 3278,
+      "user_lines_removed": 241,
+      "agent_lines_added": 7288,
+      "agent_lines_removed": 239,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 187,
+        ".pi/extensions/subagent/index.ts": 2025,
+        ".pi/extensions/subagent/suspensions.ts": 951,
+        "assets/.pi/extensions/bash-guard/index.ts": 106,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 9
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 235,
+        "assets/.pi/extensions/bash-guard/index.ts": 5,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 1
+      }
+    },
+    {
+      "checkpoint_number": 12,
+      "user_lines_added": 3278,
+      "user_lines_removed": 241,
+      "agent_lines_added": 7288,
+      "agent_lines_removed": 239,
+      "user_added_per_file": {
+        ".pi/extensions/bash-guard/index.ts": 187,
+        ".pi/extensions/subagent/index.ts": 2025,
+        ".pi/extensions/subagent/suspensions.ts": 951,
+        "assets/.pi/extensions/bash-guard/index.ts": 106,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 9
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 235,
+        "assets/.pi/extensions/bash-guard/index.ts": 5,
+        "docs/architecture/decisions/0004-subagent-suspension-arbitration.md": 1
+      }
+    }
+  ]
+}
