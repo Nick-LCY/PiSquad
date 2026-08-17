@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "944ed6e53281",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 18,
+  "files_touched": [
+    "docs/architecture/decisions/0004-subagent-suspension-arbitration.md",
+    "docs/architecture/decisions/README.md",
+    "docs/architecture/overview.md",
+    "docs/current-state.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/94/4ed6e53281/0/metadata.json",
+      "transcript": "/94/4ed6e53281/0/full.jsonl",
+      "compact_transcript": "/94/4ed6e53281/0/transcript.jsonl",
+      "content_hash": "/94/4ed6e53281/0/content_hash.txt",
+      "prompt": "/94/4ed6e53281/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1624431,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 4756928,
+    "output_tokens": 119424,
+    "api_call_count": 87
+  }
+}
