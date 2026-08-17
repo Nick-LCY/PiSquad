@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.test.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@earendil-works/pi-coding-agent": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/dist/index.js"],
+      "@earendil-works/pi-ai": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.js"],
+      "@earendil-works/pi-tui": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js"],
+      "@earendil-works/pi-agent-core": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core/dist/index.js"],
+      "typebox": ["./assets/.pi/extensions/codegraph/node_modules/typebox/build/index.mjs"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", ".pi/**/*.ts"]
+}

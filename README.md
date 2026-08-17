@@ -132,10 +132,11 @@ Collaboration:
 
 | Extension | Role |
 |---|---|
-| subagent | Delegates tasks to child pi processes with isolated context (three modes: single / parallel / chain) |
+| subagent | Delegates tasks to child pi processes with isolated context (three modes: single / parallel / chain); idle-watchdog freezes silent jobs via SIGSTOP and hands arbitration back to the parent |
 | codegraph | Wraps the codegraph CLI, registers 8 code-graph query tools (explore / node / query / status / files / callers / callees / impact) |
 | entire | Bridges pi session events to the external Entire CLI (Entire handles checkpoint / rewind), and injects `GIT_TERMINAL_PROMPT=0` into `bash` to prevent interactive hangs |
 | wikilink-lint | Subscribes to tool_call, hard-blocks write / edit on `docs/**/*.md`: rejects the write if a `[[...]]` points outside `docs/` or to a non-existent target |
+| bash-guard | Injects a default timeout (300s) on every `bash` tool call when the caller didn't pass one; notifies the agent when the default fired |
 
 ## Documentation Library
 
@@ -170,7 +171,7 @@ docs/
 │   ├── .pi/             # pi config: agents / skills / extensions
 │   │   ├── agents/      # scout / planner / worker / reviewer / archivist
 │   │   ├── skills/      # project-docs / workflow
-│   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
+│   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint / bash-guard
 │   ├── docs/            # document library (template skeleton, see section above)
 │   └── codegraph.json   # codegraph config
 

@@ -10,6 +10,28 @@
  *   - Chain: { chain: [{ agent: "name", task: "... {previous} ..." }, ...] }
  *
  * Uses JSON mode to capture structured output from subagents.
+ *
+ * Idle arbitration protocol (added by the watchdog)
+ * -------------------------------------------------
+ * When a sub-process stops producing stdout / stderr for too long
+ * (default 600s, see `IDLE_TIMEOUT_MS`), the parent freezes the
+ * entire process group with SIGSTOP and returns a fact-only snapshot
+ * to the calling LLM. The parent then decides what to do via a
+ * follow-up subagent call carrying one of three mutually-exclusive
+ * parameters:
+ *
+ *   - `resume: <suspensionId>` — thaw the process group, re-arm the
+ *     watchdog, and continue collecting events until the process
+ *     exits. Returns the final transcript.
+ *   - `kill:   <suspensionId>` — thaw, then SIGKILL the entire
+ *     process group, and return the partial transcript as a failed
+ *     result.
+ *   - `inspect: { id: <suspensionId>, lines?: number }` — return a
+ *     larger tail of stdout/stderr events without touching the
+ *     frozen process. Pure read.
+ *
+ * The full contract is documented in the `description` string passed
+ * to `registerTool` so the LLM sees it without reading source.
  */
 
 import { spawn } from "node:child_process";
@@ -30,11 +52,64 @@ import {
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { resolveDefaultTimeoutS } from "../bash-guard/index.ts";
+import {
+	type InFlightToolCall,
+	type Job,
+	type JobKind,
+	type SingleResultLite,
+	type Suspension,
+	type SuspensionId,
+	attachSignalListener,
+	detachAbortListener,
+	extractInFlight,
+	freezeProcessGroup,
+	getAllSuspensions,
+	getSiblingSuspensions,
+	getSuspension,
+	isPosixSuspendSupported,
+	killProcessGroup,
+	newParallelGroupId,
+	newSuspensionId,
+	reAttachAbortListener,
+	registerSuspension,
+	signalDescendants,
+	summarizeTail,
+	thawProcessGroup,
+	unregisterSuspension,
+} from "./suspensions.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
+
+/**
+ * Idle watchdog timeout in milliseconds. 600s = 10 minutes. Tuned to
+ * sit comfortably above the bash-guard default of 300s (5 minutes) so
+ * that any command whose own timeout fires will produce a stderr /
+ * stdout event long before the watchdog triggers — preventing false
+ * positives on perfectly healthy long commands.
+ *
+ * Override via the `SUBAGENT_IDLE_TIMEOUT_MS` environment variable for
+ * tighter test loops. Non-numeric / non-positive values fall back to
+ * the default.
+ */
+const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
+const ENV_IDLE_TIMEOUT = "SUBAGENT_IDLE_TIMEOUT_MS";
+
+function resolveIdleTimeoutMs(): number {
+	const raw = process.env[ENV_IDLE_TIMEOUT];
+	if (raw === undefined || raw === null || raw === "") return DEFAULT_IDLE_TIMEOUT_MS;
+	const n = Number(raw);
+	if (!Number.isFinite(n) || n <= 0) return DEFAULT_IDLE_TIMEOUT_MS;
+	return n;
+}
+
+/** Default number of tail events included in the `idle_suspended` snapshot. */
+const DEFAULT_TAIL_LINES = 10;
+/** Default number of tail events returned by `inspect` when caller omits `lines`. */
+const DEFAULT_INSPECT_LINES = 50;
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -166,6 +241,32 @@ interface SubagentDetails {
 	agentScope: AgentScope;
 	projectAgentsDir: string | null;
 	results: SingleResult[];
+	/**
+	 * One snapshot per suspended sub-process. Empty for normal
+	 * (non-suspended) results — the factory below guarantees
+	 * `suspensions: []` rather than leaving the field undefined so
+	 * `renderResult` (which reads `.suspensions.length` /
+	 * `.suspensions[i]`) never has to do an existence check on
+	 * every render. The defensive `?.` it keeps is purely an
+	 * extra-paranoid belt-and-braces guard for tool results that
+	 * might have come from a future codepath.
+	 */
+	suspensions: SuspendedSnapshot["suspensions"];
+}
+
+interface SuspendedSnapshot {
+	mode: "single" | "parallel" | "chain";
+	results: SingleResult[];
+	/** One snapshot per suspended sub-process, identified by
+	 *  `suspensionId`. Parallel mode may have several; single/chain
+	 *  at most one. */
+	suspensions: Array<{
+		suspensionId: string;
+		idleMs: number;
+		runningCommand: string | null;
+		requestedTimeout: number | null;
+		tail: ReturnType<typeof summarizeTail>;
+	}>;
 }
 
 function getFinalOutput(messages: Message[]): string {
@@ -265,14 +366,6 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 /**
  * Resolve an agent's skill whitelist to concrete skill file paths.
- *
- * Strict whitelist model: the caller always passes `--no-skills` to the child
- * process, so only the skills listed here are visible. Entries may be skill
- * names (resolved against pi's default `.pi` skill discovery for the child's
- * cwd) or filesystem paths (relative to cwd, `~`-prefixed, or absolute).
- *
- * Returns `paths` to feed to `--skill`, plus `missing` (unresolved entries) and
- * `available` (all discovered skill names, for error messages).
  */
 function resolveSkillPaths(
 	agentSkills: string[],
@@ -320,21 +413,11 @@ function resolveSkillPaths(
 
 /**
  * Resolve an agent's tool configuration to a concrete tool list.
- *
- * - If neither `tools` nor `toolsDeny` is set → returns all tools
- * - `tools` entries ending with `*` are expanded as prefix wildcards against `allToolNames`
- * - When `tools` is set → start from the whitelist, then filter out `toolsDeny`
- * - When only `toolsDeny` is set → start from all tools, filter out denied ones
- * - Always filters out `"subagent"` to prevent recursive delegation through child agents
- *
- * Returns a concrete `string[]` (never undefined) so the caller can distinguish
- * "empty whitelist" (deny everything) from "no whitelist at all" (allow all).
  */
 function resolveTools(agent: AgentConfig, allToolNames: string[]): string[] {
 	let resolved: string[];
 
 	if (agent.tools) {
-		// Whitelist with wildcard expansion
 		resolved = [];
 		for (const tool of agent.tools) {
 			if (tool.endsWith("*")) {
@@ -345,25 +428,161 @@ function resolveTools(agent: AgentConfig, allToolNames: string[]): string[] {
 				resolved.push(tool);
 			}
 		}
-		// Deduplicate
 		resolved = [...new Set(resolved)];
 	} else {
-		// No whitelist, start from all tools
 		resolved = [...allToolNames];
 	}
 
-	// Apply explicit deny list from frontmatter
 	if (agent.toolsDeny && agent.toolsDeny.length > 0) {
 		resolved = resolved.filter((t) => !agent.toolsDeny!.includes(t));
 	}
 
-	// Always deny subagent to prevent recursive delegation
 	resolved = resolved.filter((t) => t !== "subagent");
 
 	return resolved;
 }
 
-type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
+type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails | SuspendedSnapshot>) => void;
+
+/* -------------------------------------------------------------------------- */
+/*                     Exception safety net (P3)                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Settle state for a tool Promise. Lifted to a plain object so the
+ * same flag is visible across every callback that closes over the
+ * Promise's `resolve` (close, error, watchdog timer, abort handler,
+ * data handlers). Any callback that wants to settle the Promise
+ * MUST check `settled.done` before doing so and SET it before calling
+ * `resolve` — otherwise a re-entrant close/error/event would
+ * double-resolve.
+ */
+interface SettledState {
+	done: boolean;
+}
+
+/**
+ * Safely invoke a callback that may throw. If the callback throws,
+ * settle the Promise with `errorValue()` and log the full stack
+ * trace to stderr. This is the host-liveness safety net: any
+ * unexpected failure inside a proc event handler, watchdog timer,
+ * or arbiter helper must NOT crash the host pi process — the worst
+ * case outcome is the tool call returns an error result.
+ *
+ * Idempotent: respects `settled.done`. If the Promise has already
+ * settled, the call is a no-op (so a late proc event arriving after
+ * we already settled can't overwrite the resolution).
+ *
+ * `errorValue` is evaluated lazily — it captures the current
+ * closure state at the time of the throw, so the synthetic failure
+ * result carries the most up-to-date `currentResult` / `partial`
+ * instead of a stale snapshot.
+ */
+function safeSettle<T>(
+	settled: SettledState,
+	resolve: (value: T) => void,
+	context: string,
+	errorValue: () => T,
+	body: () => void,
+): void {
+	if (settled.done) return;
+	try {
+		body();
+	} catch (err) {
+		if (settled.done) return;
+		settled.done = true;
+		const stack = err instanceof Error ? (err.stack ?? err.message) : String(err);
+		console.error(`[subagent] ${context} threw: ${stack}`);
+		try {
+			resolve(errorValue());
+		} catch (resolveErr) {
+			const innerStack =
+				resolveErr instanceof Error ? (resolveErr.stack ?? resolveErr.message) : String(resolveErr);
+			console.error(
+				`[subagent] resolve() in ${context} also threw: ${innerStack}\n` +
+					`Original error: ${stack}`,
+			);
+		}
+	}
+}
+
+/** Build a synthetic failed SingleResult from a partial result plus
+ *  an error context. Used by error paths that catch an unexpected
+ *  callback throw and need to produce an isError tool result that's
+ *  still shape-compatible with the success path's SingleResult. */
+function makeFailedSingleResult(
+	base: SingleResult,
+	errorMessage: string,
+): SingleResult {
+	return {
+		...base,
+		exitCode: -1,
+		stopReason: "aborted",
+		errorMessage,
+	};
+}
+
+/** Build a synthetic abort result for the cold path of
+ *  `runSingleAgent`. The base result is whatever messages had been
+ *  collected so far; we mark it aborted and stamp the error. */
+function makeColdAbortResult(currentResult: SingleResult, context: string): SingleResult {
+	return makeFailedSingleResult(
+		currentResult,
+		`Subagent internal error (${context}); the sub-process was abandoned. See host stderr for the full stack trace.`,
+	);
+}
+
+/* -------------------------------------------------------------------------- */
+/*                     SingleResult <-> SingleResultLite                      */
+/* -------------------------------------------------------------------------- */
+
+function liteToSingle(lite: SingleResultLite): SingleResult {
+	return {
+		agent: lite.agent,
+		agentSource: lite.agentSource,
+		task: lite.task,
+		exitCode: lite.exitCode,
+		messages: lite.messages,
+		stderr: lite.stderr,
+		usage: lite.usage,
+		model: lite.model,
+		stopReason: lite.stopReason,
+		errorMessage: lite.errorMessage,
+		step: lite.step,
+	};
+}
+
+function singleToLite(r: SingleResult): SingleResultLite {
+	return {
+		agent: r.agent,
+		agentSource: r.agentSource,
+		task: r.task,
+		exitCode: r.exitCode,
+		messages: r.messages,
+		stderr: r.stderr,
+		usage: r.usage,
+		model: r.model,
+		stopReason: r.stopReason,
+		errorMessage: r.errorMessage,
+		step: r.step,
+	};
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              runSingleAgent                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Union returned from `runSingleAgent`. Either the process exited and
+ * we have a normal transcript, OR the idle watchdog froze it and we
+ * have a suspension id to refer back to.
+ *
+ * `suspended` means "tool call returns early with a snapshot; caller
+ * must invoke `resume`/`kill`/`inspect` later to finish the job".
+ */
+type SingleRunOutcome =
+	| { kind: "exit"; result: SingleResult }
+	| { kind: "suspended"; id: SuspensionId; snapshot: SingleResult; lastEventAtMs: number };
 
 async function runSingleAgent(
 	defaultCwd: string,
@@ -374,15 +593,17 @@ async function runSingleAgent(
 	step: number | undefined,
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
-	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	makeDetails: (results: SingleResult[], suspensions?: SuspendedSnapshot["suspensions"]) => SubagentDetails | SuspendedSnapshot,
 	allToolNames: string[],
 	modelOverride: string | undefined,
-): Promise<SingleResult> {
+	job: Job,
+	stepNumber: number,
+): Promise<SingleRunOutcome> {
 	const agent = agents.find((a) => a.name === agentName);
 
 	if (!agent) {
 		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
-		return {
+		const errResult: SingleResult = {
 			agent: agentName,
 			agentSource: "unknown",
 			task,
@@ -392,10 +613,12 @@ async function runSingleAgent(
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 			step,
 		};
+		return { kind: "exit", result: errResult };
 	}
 
 	const effectiveCwd = cwd ?? defaultCwd;
 	const effectiveModel = modelOverride ?? agent.model;
+	const idleTimeoutMs = resolveIdleTimeoutMs();
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (effectiveModel) args.push("--model", effectiveModel);
@@ -406,14 +629,12 @@ async function runSingleAgent(
 		args.push("--no-tools");
 	}
 
-	// Strict skill whitelist: deny all skills by default. Only skills declared on
-	// the agent are exposed to the child, resolved to concrete paths via `--skill`.
 	args.push("--no-skills");
 	if (agent.skills && agent.skills.length > 0) {
 		const { paths, missing, available } = resolveSkillPaths(agent.skills, effectiveCwd);
 		if (missing.length > 0) {
 			const avail = available.length > 0 ? available.join(", ") : "none";
-			return {
+			const errResult: SingleResult = {
 				agent: agentName,
 				agentSource: agent.source,
 				task,
@@ -423,6 +644,7 @@ async function runSingleAgent(
 				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 				step,
 			};
+			return { kind: "exit", result: errResult };
 		}
 		for (const p of paths) args.push("--skill", p);
 	}
@@ -452,24 +674,144 @@ async function runSingleAgent(
 	};
 
 	try {
-		if (agent.systemPrompt.trim()) {
-			const tmp = await writePromptToTempFile(agent.name, agent.systemPrompt);
-			tmpPromptDir = tmp.dir;
-			tmpPromptPath = tmp.filePath;
-			args.push("--append-system-prompt", tmpPromptPath);
-		}
+		// Build the per-spawn `--append-system-prompt` payload. We always
+		// inject the bash-guard runtime note (so the child knows its bash
+		// calls carry a default timeout) and append it after the agent's
+		// own systemPrompt when one exists. We deliberately take the
+		// minimal-invasive route here: instead of forking a separate
+		// injection channel for the note, we reuse the existing
+		// writePromptToTempFile helper. That means we now ALWAYS create a
+		// tmp file when spawning (previously we only created one when the
+		// agent had a non-empty systemPrompt) — the runtime note is
+		// always non-empty, so the file is never empty. The cleanup logic
+		// in the `finally` block below is unchanged: it removes the tmp
+		// file / dir if either pointer is set, so this change does not
+		// leak temp files.
+		const trimmedSystemPrompt = agent.systemPrompt.trim();
+		const promptContent = trimmedSystemPrompt
+			? `${agent.systemPrompt}\n\n${SUBAGENT_BASH_GUARD_RUNTIME_NOTE}`
+			: SUBAGENT_BASH_GUARD_RUNTIME_NOTE;
+		const tmp = await writePromptToTempFile(agent.name, promptContent);
+		tmpPromptDir = tmp.dir;
+		tmpPromptPath = tmp.filePath;
+		args.push("--append-system-prompt", tmpPromptPath);
 
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
 
-		const exitCode = await new Promise<number>((resolve) => {
+		let lastEventAtMs = Date.now();
+
+		const outcome = await new Promise<SingleRunOutcome>((resolve) => {
 			const invocation = getPiInvocation(args);
+			const invocationStr = `${invocation.command} ${invocation.args.join(" ")}`;
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: effectiveCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
+				detached: true,
 			});
 			let buffer = "";
+
+			// P3 host-liveness safety net (see `safeSettle`): every
+			// proc event handler, the watchdog timer, the abort
+			// handler, and the resume / finalize paths must go
+			// through `safeSettle` so an unexpected throw becomes
+			// an isError result instead of crashing the host pi
+			// process. The `settled` flag is the shared re-entrancy
+			// guard for the Promise's `resolve`.
+			const settled: SettledState = { done: false };
+
+			const settleError = (context: string): SingleRunOutcome => ({
+				kind: "exit",
+				result: makeColdAbortResult(
+					{ ...currentResult },
+					`${context}: ${(() => {
+						// The error string is captured by the
+						// outer `safeSettle`; here we just craft a
+						// generic message that points the user at
+						// stderr. The actual stack trace is logged
+						// separately by `safeSettle`.
+						return "see host stderr for the original throw";
+					})()}`,
+				),
+			});
+
+			let suspended = false;
+			let idleTimer: NodeJS.Timeout | null = null;
+			const armWatchdog = () => {
+				if (suspended) return;
+				if (idleTimer) clearTimeout(idleTimer);
+				idleTimer = setTimeout(() => {
+					safeSettle<SingleRunOutcome>(
+						settled,
+						resolve,
+						"cold watchdog timer",
+						() => settleError("cold watchdog timer"),
+						() => {
+							idleTimer = null;
+							if (proc.exitCode !== null) {
+								disarmWatchdog();
+								return;
+							}
+							const frozen = freezeProcessGroup(proc);
+							if (!frozen) {
+								currentResult.exitCode = -1;
+								currentResult.stopReason = "aborted";
+								wasAborted = true;
+								killProcessGroup(proc);
+								settled.done = true;
+								resolve({ kind: "exit", result: { ...currentResult } });
+								return;
+							}
+
+							const suspendedAtMs = Date.now();
+							const id = newSuspensionId();
+							const inFlight: InFlightToolCall | null = extractInFlight(currentResult.messages);
+							const partialLite: SingleResultLite = {
+								...currentResult,
+								step: stepNumber,
+							};
+							const suspension: Suspension = {
+								id,
+								proc,
+								inFlight,
+								messages: currentResult.messages,
+								stderr: currentResult.stderr,
+								invocation: invocationStr,
+								job,
+								partialResult: partialLite,
+								lastEventAtMs,
+								originalSignal: signal,
+								activeAbortHandler: abortHandler,
+								cancelled: false,
+							};
+							detachAbortListener(signal, abortHandler);
+							suspended = true;
+							suspension.activeAbortHandler = null;
+							registerSuspension(suspension);
+							const snapshotResult: SingleResult = {
+								...currentResult,
+								step: stepNumber,
+							};
+							settled.done = true;
+							resolve({
+								kind: "suspended",
+								id,
+								snapshot: snapshotResult,
+								lastEventAtMs,
+							});
+							void suspendedAtMs;
+						},
+					);
+				}, idleTimeoutMs);
+			};
+
+			const disarmWatchdog = () => {
+				if (idleTimer) {
+					clearTimeout(idleTimer);
+					idleTimer = null;
+				}
+			};
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -509,41 +851,135 @@ async function runSingleAgent(
 			};
 
 			proc.stdout.on("data", (data) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
-				for (const line of lines) processLine(line);
+				safeSettle<SingleRunOutcome>(
+					settled,
+					resolve,
+					"cold stdout data handler",
+					() => settleError("cold stdout data handler"),
+					() => {
+						if (settled.done) return;
+						if (suspended) return;
+						lastEventAtMs = Date.now();
+						armWatchdog();
+						buffer += data.toString();
+						const lines = buffer.split("\n");
+						buffer = lines.pop() || "";
+						for (const line of lines) processLine(line);
+					},
+				);
 			});
 
 			proc.stderr.on("data", (data) => {
-				currentResult.stderr += data.toString();
+				safeSettle<SingleRunOutcome>(
+					settled,
+					resolve,
+					"cold stderr data handler",
+					() => settleError("cold stderr data handler"),
+					() => {
+						if (settled.done) return;
+						if (suspended) return;
+						lastEventAtMs = Date.now();
+						armWatchdog();
+						currentResult.stderr += data.toString();
+					},
+				);
 			});
 
-			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
+			proc.on("close", (code, signal) => {
+				safeSettle<SingleRunOutcome>(
+					settled,
+					resolve,
+					"cold close handler",
+					() => settleError("cold close handler"),
+					() => {
+						if (settled.done) return;
+						if (suspended) return;
+						disarmWatchdog();
+						if (buffer.trim()) processLine(buffer);
+						if (code === null) {
+							currentResult.exitCode = -1;
+							currentResult.stopReason = currentResult.stopReason ?? "aborted";
+							currentResult.errorMessage = currentResult.errorMessage ??
+								(signal ? `Process terminated by signal ${signal}` : "Process terminated by signal");
+						} else {
+							currentResult.exitCode = code;
+						}
+						settled.done = true;
+						resolve({ kind: "exit", result: { ...currentResult } });
+					},
+				);
 			});
 
-			proc.on("error", () => {
-				resolve(1);
+			proc.on("error", (err) => {
+				safeSettle<SingleRunOutcome>(
+					settled,
+					resolve,
+					"cold error handler",
+					() => settleError("cold error handler"),
+					() => {
+						if (settled.done) return;
+						if (suspended) return;
+						disarmWatchdog();
+						currentResult.exitCode = 1;
+						if (!currentResult.stopReason) currentResult.stopReason = "error";
+						if (!currentResult.errorMessage) {
+							currentResult.errorMessage = err ? (err as Error).message : "Child process errored";
+						}
+						settled.done = true;
+						resolve({ kind: "exit", result: { ...currentResult } });
+					},
+				);
 			});
 
-			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
+			const abortHandler = (() => {
+				const h = () => {
+					safeSettle<SingleRunOutcome>(
+						settled,
+						resolve,
+						"cold abort handler",
+						() => settleError("cold abort handler"),
+						() => {
+							if (settled.done) return;
+							if (proc.exitCode !== null) return;
+							if (suspended) return;
+							wasAborted = true;
+							// Polite SIGTERM: walk the ppid tree first so
+							// `setsid` grand-children in their own pgid
+							// receive the polite shutdown too. Group-level
+							// SIGTERM alone would orphan them. The 5s
+							// SIGKILL fallback uses `killProcessGroup`
+							// which already walks the tree.
+							if (proc.pid) {
+								signalDescendants(proc, "SIGTERM");
+								try {
+									process.kill(-proc.pid, "SIGTERM");
+								} catch {
+									/* swallow */
+								}
+							}
+							setTimeout(() => {
+								if (proc.exitCode === null && proc.signalCode === null) killProcessGroup(proc);
+							}, 5000);
+						},
+					);
 				};
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+				return h;
+			})();
+			if (signal) {
+				if (signal.aborted) abortHandler();
+				else signal.addEventListener("abort", abortHandler, { once: true });
 			}
+
+			armWatchdog();
 		});
 
-		currentResult.exitCode = exitCode;
-		if (wasAborted) throw new Error("Subagent was aborted");
-		return currentResult;
+		if (outcome.kind === "exit") {
+			if (wasAborted && outcome.result.stopReason !== "aborted") {
+				outcome.result.stopReason = "aborted";
+			}
+			return outcome;
+		}
+		return outcome;
 	} finally {
 		if (tmpPromptPath)
 			try {
@@ -579,6 +1015,11 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 	default: "both",
 });
 
+const InspectParams = Type.Object({
+	id: Type.String({ description: "Suspension id to inspect" }),
+	lines: Type.Optional(Type.Number({ description: `Number of tail lines to return (default ${DEFAULT_INSPECT_LINES})`, default: DEFAULT_INSPECT_LINES })),
+});
+
 const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
@@ -587,18 +1028,87 @@ const SubagentParams = Type.Object({
 	agentScope: Type.Optional(AgentScopeSchema),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 	model: Type.Optional(Type.String({ description: "Override the agent's frontmatter model. Used directly in single mode; acts as the default for parallel/chain tasks that don't set their own `model`" })),
+	resume: Type.Optional(Type.String({ description: "Suspension id to resume — thaws the frozen process group and continues collecting events" })),
+	kill: Type.Optional(Type.String({ description: "Suspension id to kill — thaws the frozen process group, SIGKILLs it, returns the partial transcript" })),
+	inspect: Type.Optional(InspectParams),
 });
+
+/* -------------------------------------------------------------------------- */
+/*                              Tool description                               */
+/* -------------------------------------------------------------------------- */
+
+/** Effective default timeout applied to every bash call by the
+ *  bash-guard extension when no `timeout` parameter is passed. Resolved
+ *  once at module load so both the tool description and the per-spawn
+ *  runtime note agree, and so the BASH_GUARD_DEFAULT_TIMEOUT_S env
+ *  override is honored by both. Kept as a module-level `const` (not a
+ *  getter) so SUBAGENT_DESCRIPTION is evaluated eagerly and the runtime
+ *  note below is a plain string template. */
+const SUBAGENT_DEFAULT_BASH_TIMEOUT_S = resolveDefaultTimeoutS();
+
+/**
+ * Factual note appended to the child's `--append-system-prompt` file so
+ * the sub-agent knows up front that bash calls carry a default timeout.
+ *
+ * Coupled with `bash-guard` (../bash-guard/index.ts): both sides call
+ * `resolveDefaultTimeoutS()` at module load so the value stays in lock
+ * step with the BASH_GUARD_DEFAULT_TIMEOUT_S env override. If you tweak
+ * the wording here, mirror the rationale in bash-guard's tool_result
+ * hint — they are the same fact at two layers (pre-declaration vs.
+ * post-mortem teaching).
+ */
+const SUBAGENT_BASH_GUARD_RUNTIME_NOTE =
+	`Runtime note: the bash tool enforces a default timeout of ${SUBAGENT_DEFAULT_BASH_TIMEOUT_S} seconds when no "timeout" parameter is passed. For long-running commands (builds, test suites), pass an explicit "timeout" in seconds.`;
+
+const SUBAGENT_DESCRIPTION = [
+	"Delegate tasks to specialized subagents with isolated context.",
+	"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+	`Loads agents from both ${path.join(getAgentDir(), "agents")} (user) and ${CONFIG_DIR_NAME}/agents (project). Project agents load without a confirmation prompt.`,
+	"A `model` passed at runtime overrides the agent's frontmatter model (frontmatter is only the default). Top-level `model` applies in single mode and is the default for parallel/chain; per-item `model` overrides per-task.",
+	"",
+	"Idle arbitration protocol: a sub-process that produces no stdout/stderr for ~10 minutes is frozen via SIGSTOP (whole process group, including its bash subprocesses) and the tool call returns a snapshot with `status:\"idle_suspended\"`. To finish the job, call this tool again with one of three mutually-exclusive parameters:",
+	"  - `resume: <suspensionId>` — thaw the process group, re-arm the watchdog, and continue collecting events until the process exits; returns the final transcript.",
+	"  - `kill:   <suspensionId>` — thaw then SIGKILL the whole process group; returns the partial transcript as a failed result.",
+	"  - `inspect: { id: <suspensionId>, lines?: number }` — return more tail lines of the frozen process without touching it.",
+	"The snapshot exposes `suspensionId`, `idleMs`, `runningCommand` (the in-flight bash command, if any), `requestedTimeout` (the timeout the agent asked for), and a `tail` array of recent events.",
+	"`resume` / `kill` / `inspect` cannot be combined with `agent` / `task` / `tasks` / `chain`; pick exactly one mode per call.",
+	`Sub-agent bash calls carry a ${SUBAGENT_DEFAULT_BASH_TIMEOUT_S}s default timeout (bash-guard); when delegating long-running commands, instruct the agent to pass an explicit "timeout".`,
+].join(" ");
+
+/* -------------------------------------------------------------------------- */
+/*                              Arbitration helpers                           */
+/* -------------------------------------------------------------------------- */
+
+function buildSuspendedSnapshot(
+	mode: "single" | "parallel" | "chain",
+	suspensions: Array<{
+		suspensionId: string;
+		snapshot: SingleResult;
+		lastEventAtMs: number;
+	}>,
+): SuspendedSnapshot["suspensions"] {
+	const now = Date.now();
+	return suspensions.map((s) => {
+		const inFlight = extractInFlight(s.snapshot.messages);
+		return {
+			suspensionId: s.suspensionId,
+			idleMs: now - s.lastEventAtMs,
+			runningCommand: inFlight?.command ?? null,
+			requestedTimeout: inFlight?.timeout ?? null,
+			tail: summarizeTail(s.snapshot.messages, s.snapshot.stderr, DEFAULT_TAIL_LINES),
+		};
+	});
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  Tool                                      */
+/* -------------------------------------------------------------------------- */
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
-		description: [
-			"Delegate tasks to specialized subagents with isolated context.",
-			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			`Loads agents from both ${path.join(getAgentDir(), "agents")} (user) and ${CONFIG_DIR_NAME}/agents (project). Project agents load without a confirmation prompt.`,
-			"A `model` passed at runtime overrides the agent's frontmatter model (frontmatter is only the default). Top-level `model` applies in single mode and is the default for parallel/chain; per-item `model` overrides per-task.",
-		].join(" "),
+		description: SUBAGENT_DESCRIPTION,
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -610,19 +1120,53 @@ export default function (pi: ExtensionAPI) {
 			const hasChain = (params.chain?.length ?? 0) > 0;
 			const hasTasks = (params.tasks?.length ?? 0) > 0;
 			const hasSingle = Boolean(params.agent && params.task);
+			const hasResume = typeof params.resume === "string";
+			const hasKill = typeof params.kill === "string";
+			const hasInspect = params.inspect !== undefined;
+			const arbitrationCount = Number(hasResume) + Number(hasKill) + Number(hasInspect);
 			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
 
+			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 			const makeDetails =
-				(mode: "single" | "parallel" | "chain") =>
-				(results: SingleResult[]): SubagentDetails => ({
-					mode,
-					agentScope,
-					projectAgentsDir: discovery.projectAgentsDir,
-					results,
-				});
+				(mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) =>
+				(results: SingleResult[]): SubagentDetails | SuspendedSnapshot => {
+					return {
+						mode,
+						agentScope,
+						projectAgentsDir: discovery.projectAgentsDir,
+						results,
+						suspensions: suspensions ?? [],
+					};
+				};
+
+			if (arbitrationCount > 1) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Invalid parameters: `resume`, `kill`, and `inspect` are mutually exclusive. Pick exactly one.",
+						},
+					],
+					details: makeDetails("single")([]),
+				};
+			}
+			if (arbitrationCount === 1 && modeCount > 0) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Invalid parameters: arbitration parameters (`resume`/`kill`/`inspect`) cannot be combined with execution modes (`agent`/`task`/`tasks`/`chain`).",
+						},
+					],
+					details: makeDetails("single")([]),
+				};
+			}
+
+			if (hasResume) return handleResume(params.resume as string, signal, onUpdate, ctx, agents, allToolNames, agentScope, discovery, makeDetails, params.model);
+			if (hasKill) return handleKill(params.kill as string, ctx, makeDetails);
+			if (hasInspect) return handleInspect(params.inspect!, ctx, makeDetails);
 
 			if (modeCount !== 1) {
-				const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 				return {
 					content: [
 						{
@@ -635,175 +1179,17 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.chain && params.chain.length > 0) {
-				const results: SingleResult[] = [];
-				let previousOutput = "";
-
-				for (let i = 0; i < params.chain.length; i++) {
-					const step = params.chain[i];
-					const taskWithContext = step.task.replace(/\{previous\}/g, previousOutput);
-
-					// Create update callback that includes all previous results
-					const chainUpdate: OnUpdateCallback | undefined = onUpdate
-						? (partial) => {
-								// Combine completed results with current streaming result
-								const currentResult = partial.details?.results[0];
-								if (currentResult) {
-									const allResults = [...results, currentResult];
-									onUpdate({
-										content: partial.content,
-										details: makeDetails("chain")(allResults),
-									});
-								}
-							}
-						: undefined;
-
-					const result = await runSingleAgent(
-						ctx.cwd,
-						agents,
-						step.agent,
-						taskWithContext,
-						step.cwd,
-						i + 1,
-						signal,
-						chainUpdate,
-						makeDetails("chain"),
-						allToolNames,
-						step.model ?? params.model,
-					);
-					results.push(result);
-
-					const isError = isFailedResult(result);
-					if (isError) {
-						const errorMsg = getResultOutput(result);
-						return {
-							content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${step.agent}): ${errorMsg}` }],
-							details: makeDetails("chain")(results),
-							isError: true,
-						};
-					}
-					previousOutput = getFinalOutput(result.messages);
-				}
-				return {
-					content: [{ type: "text", text: getFinalOutput(results[results.length - 1].messages) || "(no output)" }],
-					details: makeDetails("chain")(results),
-				};
+				return runChain(params.chain, ctx, signal, onUpdate, agents, allToolNames, agentScope, discovery, makeDetails, params.model);
 			}
 
 			if (params.tasks && params.tasks.length > 0) {
-				if (params.tasks.length > MAX_PARALLEL_TASKS)
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
-							},
-						],
-						details: makeDetails("parallel")([]),
-					};
-
-				// Track all results for streaming updates
-				const allResults: SingleResult[] = new Array(params.tasks.length);
-
-				// Initialize placeholder results
-				for (let i = 0; i < params.tasks.length; i++) {
-					allResults[i] = {
-						agent: params.tasks[i].agent,
-						agentSource: "unknown",
-						task: params.tasks[i].task,
-						exitCode: -1, // -1 = still running
-						messages: [],
-						stderr: "",
-						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-					};
-				}
-
-				const emitParallelUpdate = () => {
-					if (onUpdate) {
-						const running = allResults.filter((r) => r.exitCode === -1).length;
-						const done = allResults.filter((r) => r.exitCode !== -1).length;
-						onUpdate({
-							content: [
-								{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` },
-							],
-							details: makeDetails("parallel")([...allResults]),
-						});
-					}
-				};
-
-				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
-					const result = await runSingleAgent(
-						ctx.cwd,
-						agents,
-						t.agent,
-						t.task,
-						t.cwd,
-						undefined,
-						signal,
-						// Per-task update callback
-						(partial) => {
-							if (partial.details?.results[0]) {
-								allResults[index] = partial.details.results[0];
-								emitParallelUpdate();
-							}
-						},
-						makeDetails("parallel"),
-						allToolNames,
-						t.model ?? params.model,
-					);
-					allResults[index] = result;
-					emitParallelUpdate();
-					return result;
-				});
-
-				const successCount = results.filter((r) => !isFailedResult(r)).length;
-				const summaries = results.map((r) => {
-					const output = truncateParallelOutput(getResultOutput(r));
-					const status = isFailedResult(r)
-						? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
-						: "completed";
-					return `### [${r.agent}] ${status}\n\n${output}`;
-				});
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Parallel: ${successCount}/${results.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
-						},
-					],
-					details: makeDetails("parallel")(results),
-				};
+				return runParallel(params.tasks, ctx, signal, onUpdate, agents, allToolNames, agentScope, discovery, makeDetails, params.model);
 			}
 
 			if (params.agent && params.task) {
-				const result = await runSingleAgent(
-					ctx.cwd,
-					agents,
-					params.agent,
-					params.task,
-					params.cwd,
-					undefined,
-					signal,
-					onUpdate,
-					makeDetails("single"),
-					allToolNames,
-					params.model,
-				);
-				const isError = isFailedResult(result);
-				if (isError) {
-					const errorMsg = getResultOutput(result);
-					return {
-						content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${errorMsg}` }],
-						details: makeDetails("single")([result]),
-						isError: true,
-					};
-				}
-				return {
-					content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
-					details: makeDetails("single")([result]),
-				};
+				return runSingle(params.agent, params.task, params.cwd, ctx, signal, onUpdate, agents, allToolNames, agentScope, discovery, makeDetails, params.model);
 			}
 
-			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 			return {
 				content: [{ type: "text", text: `Invalid parameters. Available agents: ${available}` }],
 				details: makeDetails("single")([]),
@@ -812,6 +1198,34 @@ export default function (pi: ExtensionAPI) {
 
 		renderCall(args, theme, _context) {
 			const scope: AgentScope = args.agentScope ?? "both";
+			if (args.resume) {
+				return new Text(
+					theme.fg("toolTitle", theme.bold("subagent ")) +
+						theme.fg("accent", `resume`) +
+						theme.fg("muted", ` ${args.resume}`),
+					0,
+					0,
+				);
+			}
+			if (args.kill) {
+				return new Text(
+					theme.fg("toolTitle", theme.bold("subagent ")) +
+						theme.fg("accent", `kill`) +
+						theme.fg("muted", ` ${args.kill}`),
+					0,
+					0,
+				);
+			}
+			if (args.inspect) {
+				const lines = args.inspect.lines ?? DEFAULT_INSPECT_LINES;
+				return new Text(
+					theme.fg("toolTitle", theme.bold("subagent ")) +
+						theme.fg("accent", `inspect`) +
+						theme.fg("muted", ` ${args.inspect.id} (${lines} lines)`),
+					0,
+					0,
+				);
+			}
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
@@ -819,7 +1233,6 @@ export default function (pi: ExtensionAPI) {
 					theme.fg("muted", ` [${scope}]`);
 				for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
 					const step = args.chain[i];
-					// Clean up {previous} placeholder for display
 					const cleanTask = step.task.replace(/\{previous\}/g, "").trim();
 					const preview = cleanTask.length > 40 ? `${cleanTask.slice(0, 40)}...` : cleanTask;
 					text +=
@@ -855,11 +1268,15 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderResult(result, { expanded }, theme, _context) {
-			const details = result.details as SubagentDetails | undefined;
-			if (!details || details.results.length === 0) {
+			const details = result.details as SubagentDetails | SuspendedSnapshot | undefined;
+			if (
+				!details ||
+				(details.results.length === 0 && (details.suspensions?.length ?? 0) === 0)
+			) {
 				const text = result.content[0];
 				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
 			}
+			const suspensions = details.suspensions ?? [];
 
 			const mdTheme = getMarkdownTheme();
 
@@ -878,6 +1295,55 @@ export default function (pi: ExtensionAPI) {
 				}
 				return text.trimEnd();
 			};
+
+			if (suspensions.length > 0) {
+				if (details.mode === "single" && details.results.length <= 1) {
+					const r = details.results[0] ?? null;
+					const susp = suspensions[0]!;
+					const icon = theme.fg("warning", "⏸");
+					const header = `${icon} ${theme.fg("toolTitle", theme.bold(r?.agent ?? "subagent"))} ${theme.fg("warning", "[idle_suspended]")}`;
+					let text = header;
+					text += `\n${theme.fg("muted", `suspensionId: ${susp.suspensionId}`)}`;
+					text += `\n${theme.fg("muted", `idleMs: ${susp.idleMs}`)}`;
+					text += `\n${theme.fg("muted", `runningCommand: ${susp.runningCommand ?? "(none)"}`)}`;
+					if (susp.requestedTimeout !== null) text += `\n${theme.fg("muted", `requestedTimeout: ${susp.requestedTimeout}s`)}`;
+					text += `\n${theme.fg("muted", "─── tail ───")}`;
+					for (const e of susp.tail) {
+						const prefix =
+							e.kind === "assistant_text"
+								? "text"
+								: e.kind === "assistant_tool_call"
+									? "tool"
+									: e.kind === "stderr"
+										? "stderr"
+										: "result";
+						text += `\n${theme.fg("dim", `[${prefix}] `)}${theme.fg("toolOutput", e.summary)}`;
+					}
+					text += `\n${theme.fg("muted", "(resume/kill/inspect with the suspensionId to proceed)")}`;
+					return new Text(text, 0, 0);
+				}
+
+				let text = `${theme.fg("warning", "⏸")} ${theme.fg("toolTitle", theme.bold(`${details.mode} suspended`))}`;
+				for (let i = 0; i < suspensions.length; i++) {
+					const susp = suspensions[i]!;
+					text += `\n\n${theme.fg("muted", `─── suspension ${i + 1} ───`)}`;
+					text += `\n${theme.fg("muted", `id: ${susp.suspensionId}`)}`;
+					text += `\n${theme.fg("muted", `idleMs: ${susp.idleMs}`)}`;
+					text += `\n${theme.fg("muted", `runningCommand: ${susp.runningCommand ?? "(none)"}`)}`;
+					for (const e of susp.tail) {
+						const prefix =
+							e.kind === "assistant_text"
+								? "text"
+								: e.kind === "assistant_tool_call"
+									? "tool"
+									: e.kind === "stderr"
+										? "stderr"
+										: "result";
+						text += `\n${theme.fg("dim", `[${prefix}] `)}${theme.fg("toolOutput", e.summary)}`;
+					}
+				}
+				return new Text(text, 0, 0);
+			}
 
 			if (details.mode === "single" && details.results.length === 1) {
 				const r = details.results[0];
@@ -982,7 +1448,6 @@ export default function (pi: ExtensionAPI) {
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
-						// Show intermediate text and tool calls in order
 						for (const item of displayItems) {
 							if (item.type === "text") {
 								if (item.text.trim()) {
@@ -1012,7 +1477,6 @@ export default function (pi: ExtensionAPI) {
 					return container;
 				}
 
-				// Collapsed view
 				let text =
 					icon +
 					" " +
@@ -1065,7 +1529,6 @@ export default function (pi: ExtensionAPI) {
 						);
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
-						// Show intermediate text and tool calls in order
 						for (const item of displayItems) {
 							if (item.type === "text") {
 								if (item.text.trim()) {
@@ -1095,7 +1558,6 @@ export default function (pi: ExtensionAPI) {
 					return container;
 				}
 
-				// Collapsed view (or still running)
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold("parallel "))}${theme.fg("accent", status)}`;
 				for (const r of details.results) {
 					const rIcon =
@@ -1123,3 +1585,1331 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 }
+
+/* -------------------------------------------------------------------------- */
+/*                          Arbitration handler bodies                         */
+/* -------------------------------------------------------------------------- */
+
+function handleInspect(
+	inspectParams: { id: string; lines?: number },
+	ctx: { cwd: string },
+	makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+): AgentToolResult<SubagentDetails | SuspendedSnapshot> {
+	const lines = inspectParams.lines ?? DEFAULT_INSPECT_LINES;
+	const susp = getSuspension(inspectParams.id);
+	if (!susp) {
+		return {
+			content: [
+				{
+					type: "text",
+					text: `No active suspension with id "${inspectParams.id}". It may have been resumed, killed, or never existed.`,
+				},
+			],
+			details: makeDetails("single")([]),
+		};
+	}
+	const tail = summarizeTail(susp.messages, susp.stderr, lines);
+	const inFlightLive = extractInFlight(susp.messages);
+	const idleMs = Date.now() - susp.lastEventAtMs;
+	const text = JSON.stringify(
+		{
+			status: "idle_inspect",
+			suspensionId: susp.id,
+			idleMs,
+			runningCommand: inFlightLive?.command ?? null,
+			requestedTimeout: inFlightLive?.timeout ?? null,
+			tail,
+		},
+		null,
+		2,
+	);
+	return {
+		content: [{ type: "text", text }],
+		details: makeDetails("single")([liteToSingle(susp.partialResult)]),
+	};
+}
+
+/**
+ * P1: rebuild a sibling suspension's `completedResults` after
+ * `handleKill` removes a task from the same parallel group.
+ *
+ * Pre-fix, the kill result was NOT propagated to siblings. When a
+ * sibling later resumed, its cursor walk over `completedResults`
+ * would consume the wrong entry (the killed task's slot was
+ * skipped, so the cursor advanced by one, and the next iteration
+ * would either reuse a sibling's slot or underflow `completedResults`
+ * entirely → `liteToSingle(undefined)` → `TypeError: Cannot read
+ * properties of undefined (reading 'agent')` at
+ * `liteToSingle(index.ts:450)` → the close handler that called
+ * `finalizeAndContinue` re-threw synchronously, and the host pi
+ * process crashed because the throw was uncaught inside the
+ * ChildProcess event emitter.
+ *
+ * The fix: at kill time, walk every sibling's `completedResults`
+ * and rebuild it so that, for each task index `i` in [0, N):
+ *   - if `i === killedIndex` → insert the kill result at this
+ *     position;
+ *   - if `i` is a still-suspended sibling's index → skip (it
+ *     remains absent from `completedResults`; the resume handler
+ *     will fill it in when that sibling resumes);
+ *   - otherwise → consume the next entry from the sibling's old
+ *     `completedResults` (which lists completed (not-suspended)
+ *     tasks in order).
+ *
+ * The cursor walk in `finalizeAndContinue` (parallel branch) is the
+ * mirror of this rebuild: it walks `tasks`, consuming one entry
+ * from `completedResults` for each non-self / non-still-suspended
+ * slot. By keeping the two walks consistent, the rebuilt array
+ * lines up with the cursor arithmetic and the merged result lands
+ * the kill result at the killed index.
+ *
+ * Returns the new `completedResults` array; the caller assigns it
+ * back to the sibling's `job.completedResults` in place.
+ */
+function mergeKillResultIntoSibling(
+	oldCompleted: SingleResultLite[],
+	killedIndex: number,
+	killResult: SingleResultLite,
+	stillSuspendedIndices: Set<number>,
+	tasksLength: number,
+): SingleResultLite[] {
+	const out: SingleResultLite[] = [];
+	let cursor = 0;
+	for (let i = 0; i < tasksLength; i++) {
+		if (i === killedIndex) {
+			out.push(killResult);
+		} else if (stillSuspendedIndices.has(i)) {
+			// Skip: this slot is still-occupied by a sibling
+			// suspension that has not yet resumed. The resume
+			// handler will fill it in when that sibling's
+			// finalize runs.
+		} else {
+			if (cursor < oldCompleted.length) {
+				out.push(oldCompleted[cursor]!);
+				cursor++;
+			}
+			// If cursor overflows, the slot is genuinely missing;
+			// P2's defensive fallback in `finalizeAndContinue` will
+			// synthesize a placeholder so the cursor walk never
+			// produces `undefined` for `liteToSingle`.
+		}
+	}
+	return out;
+}
+
+function handleKill(
+	id: string,
+	ctx: { cwd: string },
+	makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+): AgentToolResult<SubagentDetails | SuspendedSnapshot> {
+	const susp = getSuspension(id);
+	if (!susp) {
+		return {
+			content: [
+				{
+					type: "text",
+					text: `No active suspension with id "${id}". It may have been resumed, killed, or never existed.`,
+				},
+			],
+			details: makeDetails("single")([]),
+		};
+	}
+
+	susp.cancelled = true;
+
+	thawProcessGroup(susp.proc);
+
+	killProcessGroup(susp.proc);
+	setTimeout(() => killProcessGroup(susp.proc), 100);
+
+	const partial: SingleResult = {
+		...susp.partialResult,
+		exitCode: -1,
+		stopReason: "aborted",
+	};
+
+	// P1: propagate the kill result into sibling suspensions'
+	// `completedResults` so a later resume's cursor walk lands the
+	// kill result at the killed index instead of skipping the slot
+	// (which would cause an `undefined` → `liteToSingle(undefined)`
+	// crash inside the resume handler's `finalizeAndContinue`).
+	const killLite = singleToLite(partial);
+	if (susp.job.kind === "parallel" && susp.job.groupId) {
+		const killedIndex = susp.job.index;
+		const siblings = getSiblingSuspensions(susp.job.groupId, susp.id);
+		const stillSuspendedIndices = new Set<number>(
+			siblings
+				.map((s) => (s.job.kind === "parallel" ? s.job.index : -1))
+				.filter((idx) => idx >= 0),
+		);
+		for (const sib of siblings) {
+			if (sib.job.kind !== "parallel") continue;
+			sib.job.completedResults = mergeKillResultIntoSibling(
+				sib.job.completedResults,
+				killedIndex,
+				killLite,
+				stillSuspendedIndices,
+				sib.job.tasks.length,
+			);
+		}
+	}
+
+	unregisterSuspension(susp.id);
+	return {
+		content: [
+			{
+				type: "text",
+				text: `Killed suspended sub-agent ${susp.partialResult.agent}. Partial transcript follows:\n\n${getFinalOutput(partial.messages) || "(no output)"}`,
+			},
+		],
+		details: makeDetails("single")([partial]),
+	};
+}
+
+/** Map a `Job` discriminator onto the `makeDetails` mode key. Used
+ *  by `handleResume` to build the correct suspended-render details
+ *  regardless of whether we re-froze on the first or the second leg. */
+function resumeMode(job: Job): "single" | "chain" | "parallel" {
+	return job.kind;
+}
+
+function handleResume(
+	id: string,
+	signal: AbortSignal | undefined,
+	onUpdate: OnUpdateCallback | undefined,
+	ctx: { cwd: string },
+	agents: AgentConfig[],
+	allToolNames: string[],
+	agentScope: AgentScope,
+	discovery: { projectAgentsDir: string | null },
+	makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+	modelOverride: string | undefined,
+): Promise<AgentToolResult<SubagentDetails | SuspendedSnapshot>> {
+	const susp = getSuspension(id);
+	if (!susp) {
+		return Promise.resolve({
+			content: [
+				{
+					type: "text",
+					text: `No active suspension with id "${id}". It may have been resumed, killed, or never existed.`,
+				},
+			],
+			details: makeDetails("single")([]),
+		});
+	}
+
+	const thawed = thawProcessGroup(susp.proc);
+	if (!thawed && isPosixSuspendSupported()) {
+		const partial: SingleResult = {
+			...susp.partialResult,
+			exitCode: -1,
+			stopReason: "aborted",
+		};
+		unregisterSuspension(susp.id);
+		return Promise.resolve({
+			content: [
+				{
+					type: "text",
+					text: `Failed to thaw suspended sub-agent ${susp.partialResult.agent} (SIGCONT error).`,
+				},
+			],
+			details: makeDetails("single")([partial]),
+		});
+	}
+
+	const proc = susp.proc;
+	const idleTimeoutMs = resolveIdleTimeoutMs();
+
+	return new Promise<AgentToolResult<SubagentDetails | SuspendedSnapshot>>((resolve) => {
+		let buffer = "";
+		const partialLite = susp.partialResult;
+		const partial: SingleResult = liteToSingle(partialLite);
+		partial.exitCode = 0;
+
+		let lastEventAtMs = Date.now();
+		let resumedSuspended = false;
+		let activeAbortHandler: (() => void) | null = null;
+
+		// P3 host-liveness safety net (see `safeSettle`): every
+		// callback that closes over `resolve` MUST go through
+		// `safeSettle` so an unexpected throw resolves the Promise
+		// with an isError result instead of crashing the host pi
+		// process. `finalized` is the additional guard for paths
+		// that resolve via `finalizeAndContinue` (which sets
+		// `finalized = true` before resolving — late events see
+		// that and return early).
+		const settled: SettledState = { done: false };
+		const settleError = (context: string): AgentToolResult<SubagentDetails | SuspendedSnapshot> => {
+			const failed: SingleResult = {
+				...partial,
+				exitCode: -1,
+				stopReason: "aborted",
+				errorMessage: `Subagent internal error (${context}); the resume leg was abandoned. See host stderr for the full stack trace.`,
+			};
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Agent ${failed.agent}: ${failed.errorMessage ?? "internal error"}`,
+					},
+				],
+				details: makeDetails(resumeMode(susp.job))([failed]),
+				isError: true,
+			};
+		};
+
+		let idleTimer: NodeJS.Timeout | null = null;
+		const armWatchdog = () => {
+			if (resumedSuspended) return;
+			if (idleTimer) clearTimeout(idleTimer);
+			idleTimer = setTimeout(() => {
+				safeSettle<AgentToolResult<SubagentDetails | SuspendedSnapshot>>(
+					settled,
+					resolve,
+					"resume watchdog timer",
+					() => settleError("resume watchdog timer"),
+					() => {
+						if (settled.done) return;
+						idleTimer = null;
+						if (proc.exitCode !== null) {
+							disarmWatchdog();
+							return;
+						}
+						const frozen = freezeProcessGroup(proc);
+						if (!frozen) {
+							partial.exitCode = -1;
+							partial.stopReason = "aborted";
+							killProcessGroup(proc);
+							finalized = true;
+							unregisterSuspension(susp.id);
+							settled.done = true;
+							resolve({
+								content: [
+									{
+										type: "text",
+										text: `Resumed sub-agent re-froze then was force-killed (no SIGSTOP on win32). Partial transcript follows:\n\n${getFinalOutput(partial.messages) || "(no output)"}`,
+									},
+								],
+								details: makeDetails(resumeMode(susp.job))([partial]),
+							});
+							return;
+						}
+						const newId = newSuspensionId();
+						const inFlight = extractInFlight(partial.messages);
+						const suspension2: Suspension = {
+							id: newId,
+							proc,
+							inFlight,
+							messages: partial.messages,
+							stderr: partial.stderr,
+							invocation: susp.invocation,
+							job: susp.job,
+							partialResult: singleToLite(partial),
+							lastEventAtMs,
+							originalSignal: susp.originalSignal,
+							activeAbortHandler,
+							cancelled: false,
+						};
+						detachAbortListener(susp.originalSignal, activeAbortHandler);
+						suspension2.activeAbortHandler = null;
+						activeAbortHandler = null;
+						resumedSuspended = true;
+						finalized = true;
+						registerSuspension(suspension2);
+						unregisterSuspension(susp.id);
+						settled.done = true;
+						resolve({
+							content: [
+								{
+									type: "text",
+									text: JSON.stringify(
+										{
+											status: "idle_suspended",
+											suspensionId: newId,
+											idleMs: Date.now() - lastEventAtMs,
+											runningCommand: inFlight?.command ?? null,
+											requestedTimeout: inFlight?.timeout ?? null,
+											tail: summarizeTail(partial.messages, partial.stderr, DEFAULT_TAIL_LINES),
+										},
+										null,
+										2,
+									),
+								},
+							],
+							details: makeDetails(resumeMode(susp.job))([partial]),
+						});
+					},
+				);
+			}, idleTimeoutMs);
+		};
+		const disarmWatchdog = () => {
+			if (idleTimer) {
+				clearTimeout(idleTimer);
+				idleTimer = null;
+			}
+		};
+
+		const processLine = (line: string) => {
+			if (!line.trim()) return;
+			let event: any;
+			try {
+				event = JSON.parse(line);
+			} catch {
+				return;
+			}
+			if (event.type === "message_end" && event.message) {
+				const msg = event.message as Message;
+				partial.messages.push(msg);
+				if (msg.role === "assistant") {
+					partial.usage.turns++;
+					const usage = msg.usage;
+					if (usage) {
+						partial.usage.input += usage.input || 0;
+						partial.usage.output += usage.output || 0;
+						partial.usage.cacheRead += usage.cacheRead || 0;
+						partial.usage.cacheWrite += usage.cacheWrite || 0;
+						partial.usage.cost += usage.cost?.total || 0;
+						partial.usage.contextTokens = usage.totalTokens || 0;
+					}
+					if (!partial.model && msg.model) partial.model = msg.model;
+					if (msg.stopReason) partial.stopReason = msg.stopReason;
+					if (msg.errorMessage) partial.errorMessage = msg.errorMessage;
+				}
+				if (onUpdate) {
+					onUpdate({
+						content: [{ type: "text", text: getFinalOutput(partial.messages) || "(running...)" }],
+						details: makeDetails(resumeMode(susp.job))([partial]),
+					});
+				}
+			}
+			if (event.type === "tool_result_end" && event.message) {
+				partial.messages.push(event.message as Message);
+				if (onUpdate) {
+					onUpdate({
+						content: [{ type: "text", text: getFinalOutput(partial.messages) || "(running...)" }],
+						details: makeDetails(resumeMode(susp.job))([partial]),
+					});
+				}
+			}
+		};
+
+		// Strip cold-path stdout/stderr listeners. Node preserves
+		// EventEmitter listeners across SIGSTOP, so the cold-path
+		// ones are still attached. They bail on their own
+		// `suspended` flag, but they still fire — and accumulate
+		// across resume cycles (N-W1). Remove them and attach
+		// fresh ones for THIS leg.
+		proc.stdout?.removeAllListeners("data");
+		proc.stderr?.removeAllListeners("data");
+
+		const onStdoutData = (data: Buffer) => {
+			safeSettle<AgentToolResult<SubagentDetails | SuspendedSnapshot>>(
+				settled,
+				resolve,
+				"resume stdout data handler",
+				() => settleError("resume stdout data handler"),
+				() => {
+					if (settled.done) return;
+					if (resumedSuspended) return;
+					lastEventAtMs = Date.now();
+					armWatchdog();
+					buffer += data.toString();
+					const lines = buffer.split("\n");
+					buffer = lines.pop() || "";
+					for (const line of lines) processLine(line);
+				},
+			);
+		};
+		const onStderrData = (data: Buffer) => {
+			safeSettle<AgentToolResult<SubagentDetails | SuspendedSnapshot>>(
+				settled,
+				resolve,
+				"resume stderr data handler",
+				() => settleError("resume stderr data handler"),
+				() => {
+					if (settled.done) return;
+					if (resumedSuspended) return;
+					lastEventAtMs = Date.now();
+					armWatchdog();
+					partial.stderr += data.toString();
+				},
+			);
+		};
+
+		proc.stdout?.on("data", onStdoutData);
+		proc.stderr?.on("data", onStderrData);
+
+		// Strip cold-path close/error listeners for the same
+		// accumulation reason (N-W1 / N-C3).
+		proc.removeAllListeners("close");
+		proc.removeAllListeners("error");
+
+		let finalized = false;
+
+		const finalizeAndContinue = (result: SingleResult, job: Job) => {
+			// P3: wrap the entire body in safeSettle so an
+			// unexpected throw inside the arbiter (e.g. the
+			// `liteToSingle(undefined)` crash fixed by P1, or any
+			// future invariant violation) ends up as an isError
+			// tool result instead of crashing the host pi process.
+			// The intra-body `resolve(...)` calls are part of the
+			// wrapped body — safeSettle captures the throw, logs
+			// the stack to stderr, and falls back to a synthetic
+			// failure result.
+			//
+			// N-W5: if handleKill already responded, drop the
+			// late close/error event BEFORE evaluating any
+			// resolve-arg expressions.
+			//
+			// N-R1: handleKill set `cancelled = true` and killed
+			// the proc group, then unregistered the suspension.
+			// The resume leg is still pending — without resolving
+			// here, the parent's tool call hangs forever. Return a
+			// fact-only summary built from whatever events the
+			// resume handler collected before the kill landed.
+			safeSettle<AgentToolResult<SubagentDetails | SuspendedSnapshot>>(
+				settled,
+				resolve,
+				"finalizeAndContinue",
+				() => settleError("finalizeAndContinue"),
+				() => {
+					if (settled.done) return;
+					if (susp.cancelled) {
+						if (!finalized) {
+							finalized = true;
+							disarmWatchdog();
+						}
+						settled.done = true;
+						resolve({
+							content: [
+								{
+									type: "text",
+									text: `Resumed sub-agent was killed while resuming. Partial transcript:\n\n${getFinalOutput(result.messages) || "(no output)"}`,
+								},
+							],
+							details: makeDetails(resumeMode(susp.job))([result]),
+						});
+						return;
+					}
+					if (finalized) return;
+					finalized = true;
+					disarmWatchdog();
+					unregisterSuspension(susp.id);
+
+					// N-W2: detach the abort handler we re-attached at
+					// the top of handleResume so it does not leak into
+					// the user's AbortSignal for the rest of the
+					// parent's life.
+					if (activeAbortHandler) {
+						detachAbortListener(susp.originalSignal, activeAbortHandler);
+						activeAbortHandler = null;
+					}
+
+					if (job.kind === "single") {
+						const isError = isFailedResult(result);
+						const out = getFinalOutput(result.messages) || "(no output)";
+						settled.done = true;
+						resolve({
+							content: isError
+								? [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${out}` }]
+								: [{ type: "text", text: out }],
+							details: makeDetails("single")([result]),
+							isError,
+						});
+						return;
+					}
+					if (job.kind === "chain") {
+						const allResults: SingleResult[] = [...job.results.map(liteToSingle), result];
+						const previousOutput = getFinalOutput(result.messages);
+						// The Promise is passed to resolve; if
+						// `runChainRemaining` rejects, the outer
+						// tool framework will surface it as an
+						// error. We do not resolve here
+						// synchronously: `runChainRemaining` is
+						// async and itself contains proc I/O.
+						// Surface rejection as a tool error by
+						// chaining `.catch` into an isError result.
+						settled.done = true;
+						resolve(
+							runChainRemaining(
+								job.steps.slice(job.index + 1),
+								job.index + 1,
+								previousOutput,
+								allResults,
+								job.steps,
+								ctx,
+								signal,
+								onUpdate,
+								agents,
+								allToolNames,
+								agentScope,
+								discovery,
+								makeDetails,
+								modelOverride,
+							).catch((err) => {
+								// P3: `runChainRemaining` rejected
+								// (e.g. a downstream proc handler
+								// threw unexpectedly). Convert the
+								// rejection into an isError tool
+								// result so the host doesn't crash.
+								const stack = err instanceof Error ? (err.stack ?? err.message) : String(err);
+								console.error(`[subagent] runChainRemaining rejected: ${stack}`);
+								const failed: SingleResult = {
+									...result,
+									exitCode: -1,
+									stopReason: "aborted",
+									errorMessage: `Chain continuation failed: ${err instanceof Error ? err.message : String(err)}`,
+								};
+								return {
+									content: [
+										{
+											type: "text",
+											text: `Chain stopped at step ${job.index + 1} (${result.agent}): ${failed.errorMessage ?? "internal error"}`,
+										},
+									],
+									details: makeDetails("chain")([...allResults]),
+									isError: true,
+								} satisfies AgentToolResult<SubagentDetails | SuspendedSnapshot>;
+							}),
+						);
+						return;
+					}
+					if (job.kind === "parallel") {
+				// N-C2: rebuild a fully-ordered result array.
+				// The previous design assumed exactly one
+				// suspended task and walked
+				// `job.completedResults` as "every other slot".
+				// With multiple concurrent suspensions each
+				// suspension's `completedResults` is patched to
+				// exclude ALL suspended indices, so a resume on
+				// one of them consumes only its own +
+				// truly-completed siblings.
+				const allActive = getAllSuspensions().filter(
+					(s) => s.job.kind === "parallel" && s.id !== susp.id,
+				);
+				const stillSuspendedIndices = new Set<number>();
+				for (const s of allActive) {
+					if (s.job.kind === "parallel") stillSuspendedIndices.add(s.job.index);
+				}
+
+				const merged: SingleResult[] = new Array(job.tasks.length);
+				let sibCursor = 0;
+				for (let i = 0; i < job.tasks.length; i++) {
+					if (i === job.index) {
+						merged[i] = result;
+					} else if (stillSuspendedIndices.has(i)) {
+						merged[i] = {
+							agent: job.tasks[i]!.agent,
+							agentSource: "unknown",
+							task: job.tasks[i]!.task,
+							exitCode: -1,
+							messages: [],
+							stderr: "",
+							usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+						};
+					} else {
+						const lite = job.completedResults[sibCursor];
+						if (lite) {
+							merged[i] = liteToSingle(lite);
+						} else {
+							// P2 (defensive fallback): the cursor
+							// underflowed `job.completedResults`.
+							// This shouldn't happen with P1's kill
+							// propagation in place, but it COULD
+							// happen if a sibling's
+							// `completedResults` was clobbered by
+							// some other path (e.g. a test seam
+							// that mutates the registry directly,
+							// or a future codepath that forgets to
+							// update siblings). Synthesize a
+							// placeholder failed result so the
+							// cursor walk never produces
+							// `undefined` for `liteToSingle` —
+							// which is the literal crash site
+							// (`liteToSingle` on line ~450 reads
+							// `lite.agent`).
+							merged[i] = {
+								agent: job.tasks[i]!.agent,
+								agentSource: "unknown",
+								task: job.tasks[i]!.task,
+								exitCode: -1,
+								stopReason: "aborted",
+								errorMessage: `Sibling task at index ${i} (${job.tasks[i]!.agent}) produced no result — likely killed during suspension before its result was propagated to this parallel group.`,
+								messages: [],
+								stderr: "",
+								usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+							};
+						}
+						sibCursor++;
+					}
+				}
+
+				if (stillSuspendedIndices.size > 0) {
+					// N-C2: patch every other still-suspended
+					// suspension's `completedResults` to include
+					// the just-resumed result, so when ITS
+					// resume fires later, the cursor walk finds
+					// the right number of entries (excluding all
+					// still-suspended indices + itself). Without
+					// this, the second resume would either
+					// underflow (no entries for completed slots)
+					// or overflow (consume a sibling's slot).
+					for (const s of allActive) {
+						if (s.job.kind !== "parallel") continue;
+						if (s.job.index === job.index) continue;
+						// Rebuild completedResults from the patched
+						// `merged` array we just constructed,
+						// skipping still-suspended slots and the
+						// current slot (which the resume handler
+						// is now resolving).
+						const newCompleted: SingleResultLite[] = [];
+						for (let k = 0; k < merged.length; k++) {
+							if (stillSuspendedIndices.has(k)) continue;
+							if (k === s.job.index) continue;
+							newCompleted.push(singleToLite(merged[k]!));
+						}
+						// `s.job` is mutable in place — the
+						// resume handler reads from the same
+						// reference on the next call.
+						(s.job as { completedResults: SingleResultLite[] }).completedResults = newCompleted;
+					}
+					const remaining = allActive.map((s) => {
+						const idleMs = Date.now() - s.lastEventAtMs;
+						const inFlight = extractInFlight(s.messages);
+						return {
+							suspensionId: s.id,
+							idleMs,
+							runningCommand: inFlight?.command ?? null,
+							requestedTimeout: inFlight?.timeout ?? null,
+							tail: summarizeTail(s.messages, s.stderr, DEFAULT_TAIL_LINES),
+						};
+					});
+					const successCount = merged.filter(
+						(r) => r.exitCode !== -1 && !isFailedResult(r),
+					).length;
+					const completedCount = merged.filter((r) => r.exitCode !== -1).length;
+					const trailerLines = remaining
+						.map(
+							(s) =>
+								`- suspensionId: ${s.suspensionId} (idleMs=${s.idleMs}, command=${s.runningCommand ?? "(none)"})`,
+						)
+						.join("\n");
+					resolve({
+						content: [
+							{
+								type: "text",
+								text:
+									JSON.stringify(
+										{
+											status: "idle_suspended",
+											suspensions: remaining,
+											completedCount,
+											totalTasks: job.tasks.length,
+											successCount,
+										},
+										null,
+										2,
+									) + `\n\n${trailerLines}`,
+							},
+						],
+						details: makeDetails("parallel", remaining)(merged),
+					});
+					return;
+				}
+
+				const successCount = merged.filter((r) => !isFailedResult(r)).length;
+				const summaries = merged.map((r) => {
+					const output = truncateParallelOutput(getResultOutput(r));
+					const status = isFailedResult(r)
+						? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
+						: "completed";
+					return `### [${r.agent}] ${status}\n\n${output}`;
+				});
+				settled.done = true;
+				resolve({
+					content: [
+						{
+							type: "text",
+							text: `Parallel: ${successCount}/${merged.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
+						},
+					],
+					details: makeDetails("parallel")(merged),
+				});
+				return;
+			}
+				},
+			);
+		};
+
+		proc.once("close", (code, signal) => {
+			safeSettle<AgentToolResult<SubagentDetails | SuspendedSnapshot>>(
+				settled,
+				resolve,
+				"resume close handler",
+				() => settleError("resume close handler (lit the kill/crash path during finalize)"),
+				() => {
+					if (settled.done) return;
+					if (finalized) return;
+					if (resumedSuspended) return;
+					if (buffer.trim()) processLine(buffer);
+					const result: SingleResult = { ...partial };
+					if (code === null) {
+						result.exitCode = -1;
+						if (!result.stopReason) result.stopReason = "aborted";
+						if (!result.errorMessage) {
+							result.errorMessage = signal ? `Process terminated by signal ${signal}` : "Process terminated by signal";
+						}
+					} else {
+						result.exitCode = code;
+					}
+					// Finalize via the safe wrapper so any throw
+					// inside `finalizeAndContinue` (the active
+					// crash site: liteToSingle(undefined) on a
+					// missing sibling slot) becomes an isError
+					// result instead of crashing the host.
+					safeSettle<AgentToolResult<SubagentDetails | SuspendedSnapshot>>(
+						settled,
+						resolve,
+						"finalizeAndContinue (close)",
+						() => settleError("finalizeAndContinue (close)"),
+						() => {
+							if (settled.done) return;
+							finalizeAndContinue(result, susp.job);
+						},
+					);
+				},
+			);
+		});
+
+		proc.once("error", (err) => {
+			safeSettle<AgentToolResult<SubagentDetails | SuspendedSnapshot>>(
+				settled,
+				resolve,
+				"resume error handler",
+				() => settleError("resume error handler"),
+				() => {
+					if (settled.done) return;
+					if (finalized) return;
+					if (resumedSuspended) return;
+					const result: SingleResult = { ...partial, exitCode: 1 };
+					if (!result.stopReason) result.stopReason = "error";
+					if (!result.errorMessage) {
+						result.errorMessage = err ? (err as Error).message : "Child process errored";
+					}
+					safeSettle<AgentToolResult<SubagentDetails | SuspendedSnapshot>>(
+						settled,
+						resolve,
+						"finalizeAndContinue (error)",
+						() => settleError("finalizeAndContinue (error)"),
+						() => {
+							if (settled.done) return;
+							finalizeAndContinue(result, susp.job);
+						},
+					);
+				},
+			);
+		});
+
+		activeAbortHandler = reAttachAbortListener(signal, proc, {
+			isSuspended: () => resumedSuspended,
+		});
+
+		armWatchdog();
+	});
+}
+
+/* -------------------------------------------------------------------------- */
+/*                       Mode runners: single / chain / parallel              */
+/* -------------------------------------------------------------------------- */
+
+async function runSingle(
+	agentName: string,
+	task: string,
+	cwd: string | undefined,
+	ctx: { cwd: string },
+	signal: AbortSignal | undefined,
+	onUpdate: OnUpdateCallback | undefined,
+	agents: AgentConfig[],
+	allToolNames: string[],
+	agentScope: AgentScope,
+	discovery: { projectAgentsDir: string | null },
+	makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+	modelOverride: string | undefined,
+): Promise<AgentToolResult<SubagentDetails | SuspendedSnapshot>> {
+	const outcome = await runSingleAgent(
+		ctx.cwd,
+		agents,
+		agentName,
+		task,
+		cwd,
+		undefined,
+		signal,
+		onUpdate,
+		makeDetails("single"),
+		allToolNames,
+		modelOverride,
+		{ kind: "single" },
+		0,
+	);
+	if (outcome.kind === "suspended") {
+		const built = buildSuspendedSnapshot("single", [
+			{ suspensionId: outcome.id, snapshot: outcome.snapshot, lastEventAtMs: outcome.lastEventAtMs },
+		]);
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(
+						{
+							status: "idle_suspended",
+							suspensionId: outcome.id,
+							idleMs: Date.now() - outcome.lastEventAtMs,
+							runningCommand: built[0]?.runningCommand ?? null,
+							requestedTimeout: built[0]?.requestedTimeout ?? null,
+							tail: built[0]?.tail ?? [],
+						},
+						null,
+						2,
+					),
+				},
+			],
+			details: makeDetails("single", built)([outcome.snapshot]),
+		};
+	}
+	const result = outcome.result;
+	const isError = isFailedResult(result);
+	const out = getResultOutput(result);
+	if (isError) {
+		return {
+			content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${out}` }],
+			details: makeDetails("single")([result]),
+			isError: true,
+		};
+	}
+	return {
+		content: [{ type: "text", text: out }],
+		details: makeDetails("single")([result]),
+	};
+}
+
+async function runChain(
+	chain: Array<{ agent: string; task: string; cwd?: string; model?: string }>,
+	ctx: { cwd: string },
+	signal: AbortSignal | undefined,
+	onUpdate: OnUpdateCallback | undefined,
+	agents: AgentConfig[],
+	allToolNames: string[],
+	agentScope: AgentScope,
+	discovery: { projectAgentsDir: string | null },
+	makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+	modelOverride: string | undefined,
+): Promise<AgentToolResult<SubagentDetails | SuspendedSnapshot>> {
+	const results: SingleResult[] = [];
+	let previousOutput = "";
+	for (let i = 0; i < chain.length; i++) {
+		const r = await runChainStep(
+			i,
+			chain[i]!,
+			chain,
+			results,
+			previousOutput,
+			ctx,
+			signal,
+			onUpdate,
+			agents,
+			allToolNames,
+			agentScope,
+			discovery,
+			makeDetails,
+			modelOverride,
+		);
+		if ("early" in r) return r.early;
+		results.push(r.result);
+		if (r.isError) {
+			const errorMsg = getResultOutput(r.result);
+			return {
+				content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${chain[i]!.agent}): ${errorMsg}` }],
+				details: makeDetails("chain")(results),
+				isError: true,
+			};
+		}
+		previousOutput = getFinalOutput(r.result.messages);
+	}
+	return {
+		content: [{ type: "text", text: getFinalOutput(results[results.length - 1]!.messages) || "(no output)" }],
+		details: makeDetails("chain")(results),
+	};
+}
+
+async function runChainRemaining(
+	remaining: Array<{ agent: string; task: string; cwd?: string; model?: string }>,
+	startIndex: number,
+	previousOutput: string,
+	allResults: SingleResult[],
+	fullChain: Array<{ agent: string; task: string; cwd?: string; model?: string }>,
+	ctx: { cwd: string },
+	signal: AbortSignal | undefined,
+	onUpdate: OnUpdateCallback | undefined,
+	agents: AgentConfig[],
+	allToolNames: string[],
+	agentScope: AgentScope,
+	discovery: { projectAgentsDir: string | null },
+	makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+	modelOverride: string | undefined,
+): Promise<AgentToolResult<SubagentDetails | SuspendedSnapshot>> {
+	let prev = previousOutput;
+	for (let i = 0; i < remaining.length; i++) {
+		const idx = startIndex + i;
+		const r = await runChainStep(
+			idx,
+			remaining[i]!,
+			fullChain,
+			allResults,
+			prev,
+			ctx,
+			signal,
+			onUpdate,
+			agents,
+			allToolNames,
+			agentScope,
+			discovery,
+			makeDetails,
+			modelOverride,
+		);
+		if ("early" in r) return r.early;
+		allResults[idx] = r.result;
+		if (r.isError) {
+			const errorMsg = getResultOutput(r.result);
+			return {
+				content: [{ type: "text", text: `Chain stopped at step ${idx + 1} (${remaining[i]!.agent}): ${errorMsg}` }],
+				details: makeDetails("chain")(allResults),
+				isError: true,
+			};
+		}
+		prev = getFinalOutput(r.result.messages);
+	}
+	return {
+		content: [{ type: "text", text: getFinalOutput(allResults[allResults.length - 1]!.messages) || "(no output)" }],
+		details: makeDetails("chain")(allResults),
+	};
+}
+
+type ChainStepOutcome =
+	| { result: SingleResult; isError: boolean }
+	| { early: AgentToolResult<SubagentDetails | SuspendedSnapshot> };
+
+async function runChainStep(
+	stepIndex: number,
+	step: { agent: string; task: string; cwd?: string; model?: string },
+	fullChain: Array<{ agent: string; task: string; cwd?: string; model?: string }>,
+	results: SingleResult[],
+	previousOutput: string,
+	ctx: { cwd: string },
+	signal: AbortSignal | undefined,
+	onUpdate: OnUpdateCallback | undefined,
+	agents: AgentConfig[],
+	allToolNames: string[],
+	agentScope: AgentScope,
+	discovery: { projectAgentsDir: string | null },
+	makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+	modelOverride: string | undefined,
+): Promise<ChainStepOutcome> {
+	const taskWithContext = step.task.replace(/\{previous\}/g, previousOutput);
+	const chainUpdate: OnUpdateCallback | undefined = onUpdate
+		? (partial) => {
+				const currentResult = partial.details?.results?.[0] as SingleResult | undefined;
+				if (currentResult) {
+					const merged = [...results, currentResult];
+					onUpdate({
+						content: partial.content,
+						details: makeDetails("chain")(merged),
+					});
+				}
+			}
+		: undefined;
+
+	const outcome = await runSingleAgent(
+		ctx.cwd,
+		agents,
+		step.agent,
+		taskWithContext,
+		step.cwd,
+		stepIndex + 1,
+		signal,
+		chainUpdate,
+		makeDetails("chain"),
+		allToolNames,
+		step.model ?? modelOverride,
+		{
+			kind: "chain",
+			steps: fullChain,
+			index: stepIndex,
+			previousOutput,
+			results: results.map(singleToLite),
+		},
+		stepIndex + 1,
+	);
+	if (outcome.kind === "suspended") {
+		const built = buildSuspendedSnapshot("chain", [
+			{ suspensionId: outcome.id, snapshot: outcome.snapshot, lastEventAtMs: outcome.lastEventAtMs },
+		]);
+		return {
+			early: {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify(
+							{
+								status: "idle_suspended",
+								suspensionId: outcome.id,
+								idleMs: Date.now() - outcome.lastEventAtMs,
+								runningCommand: built[0]?.runningCommand ?? null,
+								requestedTimeout: built[0]?.requestedTimeout ?? null,
+								tail: built[0]?.tail ?? [],
+							},
+							null,
+							2,
+						),
+					},
+				],
+				details: makeDetails("chain", built)([...results, outcome.snapshot]),
+			},
+		};
+	}
+	const result = outcome.result;
+	return { result, isError: isFailedResult(result) };
+}
+
+async function runParallel(
+	tasks: Array<{ agent: string; task: string; cwd?: string; model?: string }>,
+	ctx: { cwd: string },
+	signal: AbortSignal | undefined,
+	onUpdate: OnUpdateCallback | undefined,
+	agents: AgentConfig[],
+	allToolNames: string[],
+	agentScope: AgentScope,
+	discovery: { projectAgentsDir: string | null },
+	makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+	modelOverride: string | undefined,
+): Promise<AgentToolResult<SubagentDetails | SuspendedSnapshot>> {
+	if (tasks.length > MAX_PARALLEL_TASKS) {
+		return {
+			content: [
+				{
+					type: "text",
+					text: `Too many parallel tasks (${tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
+				},
+			],
+			details: makeDetails("parallel")([]),
+		};
+	}
+
+	const allResults: SingleResult[] = new Array(tasks.length);
+	for (let i = 0; i < tasks.length; i++) {
+		allResults[i] = {
+			agent: tasks[i]!.agent,
+			agentSource: "unknown",
+			task: tasks[i]!.task,
+			exitCode: -1,
+			messages: [],
+			stderr: "",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+		};
+	}
+
+	// P1: parallel-group id. Every suspension issued by this call
+	// shares this groupId so `handleKill` can find siblings via
+	// `getSiblingSuspensions` and merge the kill result into their
+	// `completedResults` (otherwise a kill-then-resume sequence
+	// would shift slots because the cursor walk would consume the
+	// wrong completedResults entries — the live crash bug). Format
+	// mirrors `newSuspensionId` but prefixed with `par_` to keep
+	// the two namespaces visually distinct.
+	const groupId = newParallelGroupId();
+
+	const emitParallelUpdate = (suspensions?: SuspendedSnapshot["suspensions"]) => {
+		if (onUpdate) {
+			const running = allResults.filter((r) => r.exitCode === -1).length;
+			const done = allResults.filter((r) => r.exitCode !== -1).length;
+			onUpdate({
+				content: [
+					{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` },
+				],
+				details: makeDetails("parallel", suspensions)([...allResults]),
+			});
+		}
+	};
+
+	const tasks_ = await mapWithConcurrencyLimit(tasks, MAX_CONCURRENCY, async (t, index) => {
+		const r = await runSingleAgent(
+			ctx.cwd,
+			agents,
+			t.agent,
+			t.task,
+			t.cwd,
+			undefined,
+			signal,
+			(partial) => {
+				const r0 = partial.details?.results?.[0] as SingleResult | undefined;
+				if (r0) {
+					allResults[index] = r0;
+					emitParallelUpdate();
+				}
+			},
+			makeDetails("parallel"),
+			allToolNames,
+			t.model ?? modelOverride,
+			{
+				kind: "parallel",
+				groupId,
+				tasks,
+				index,
+				taskSpec: t,
+				completedResults: allResults
+					.filter((_, i) => i !== index && allResults[i]!.exitCode !== -1)
+					.map(singleToLite),
+			},
+			0,
+		);
+		if (r.kind === "suspended") {
+			allResults[index] = r.snapshot;
+			return { suspended: true, id: r.id, lastEventAtMs: r.lastEventAtMs, snapshot: r.snapshot } as const;
+		}
+		allResults[index] = r.result;
+		emitParallelUpdate();
+		return { suspended: false as const, result: r.result };
+	});
+
+	// N-C2: compute the suspended-index set ONCE so every
+	// suspension's `completedResults` is patched with the same
+	// exclusion. With multiple concurrent suspensions the
+	// previous per-suspension patch (excluding only its own
+	// index) caused a resume on one to consume the others as
+	// if they had completed, shifting slots by one.
+	const suspendedIndices = new Set<number>();
+	for (let i = 0; i < tasks_.length; i++) {
+		const t = tasks_[i]!;
+		if ("suspended" in t && t.suspended) suspendedIndices.add(i);
+	}
+
+	const suspensions: SuspendedSnapshot["suspensions"] = [];
+	let anySuspended = false;
+	for (let i = 0; i < tasks_.length; i++) {
+		const t = tasks_[i]!;
+		if ("suspended" in t && t.suspended) {
+			anySuspended = true;
+			const liveSusp = getSuspension(t.id);
+			if (liveSusp && liveSusp.job.kind === "parallel") {
+				liveSusp.job = {
+					...liveSusp.job,
+					completedResults: allResults
+						.filter((_, j) => !suspendedIndices.has(j))
+						.map(singleToLite),
+				};
+			}
+			const built = buildSuspendedSnapshot("parallel", [
+				{ suspensionId: t.id, snapshot: t.snapshot, lastEventAtMs: t.lastEventAtMs },
+			]);
+			suspensions.push(built[0]!);
+		}
+	}
+
+	if (anySuspended) {
+		const completedResults = tasks_
+			.map((t, i) => ({ t, i }))
+			.filter((x) => "result" in x.t)
+			.map((x) => getResultOutput((x.t as { result: SingleResult }).result));
+		const suspendedText = suspensions
+			.map(
+				(s) =>
+					`- suspensionId: ${s.suspensionId} (idleMs=${s.idleMs}, command=${s.runningCommand ?? "(none)"})`,
+			)
+			.join("\n");
+		return {
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify(
+						{
+							status: "idle_suspended",
+							suspensions: suspensions.map((s) => ({
+								suspensionId: s.suspensionId,
+								idleMs: s.idleMs,
+								runningCommand: s.runningCommand,
+								requestedTimeout: s.requestedTimeout,
+								tail: s.tail,
+							})),
+							completedCount: completedResults.length,
+							totalTasks: tasks.length,
+						},
+						null,
+						2,
+					) + `\n\n${suspendedText}`,
+				},
+			],
+			details: makeDetails("parallel", suspensions)([...allResults]),
+		};
+	}
+
+	const successCount = allResults.filter((r) => !isFailedResult(r)).length;
+	const summaries = allResults.map((r) => {
+		const output = truncateParallelOutput(getResultOutput(r));
+		const status = isFailedResult(r)
+			? `failed${r.stopReason && r.stopReason !== "end" ? ` (${r.stopReason})` : ""}`
+			: "completed";
+		return `### [${r.agent}] ${status}\n\n${output}`;
+	});
+	return {
+		content: [
+			{
+				type: "text",
+				text: `Parallel: ${successCount}/${allResults.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
+			},
+		],
+		details: makeDetails("parallel")(allResults),
+	};
+}
+
+/* -------------------------------------------------------------------------- */
+/*                       Parent-process cleanup (Stage G)                     */
+/* -------------------------------------------------------------------------- */
+
+let __parentProcessCleanupRegistered = false;
+function parentProcessCleanup(): void {
+	if (__parentProcessCleanupRegistered) return;
+	__parentProcessCleanupRegistered = true;
+	const reap = () => {
+		const suspended = getAllSuspensions();
+		for (const s of suspended) {
+			// `killProcessGroup` is the same synchronous descendant
+			// walker used by the regular kill path — it SIGCONT's
+			// the tree (handles the frozen case) and SIGKILL's
+			// every descendant by ppid before the group-level
+			// SIGKILL. Keeping this path synchronous (parent
+			// `exit` / SIGINT / SIGTERM handlers run on the
+			// main thread; we can't await anything here) — the
+			// function is sync top-to-bottom (sync walk + sync
+			// signal + sync fallback). Using the helper here
+			// removes the previous pgid-only gap that would
+			// have orphaned setsid grand-children on parent
+			// shutdown.
+			killProcessGroup(s.proc);
+		}
+	};
+
+	process.on("exit", reap);
+
+	const onSignal = (sig: NodeJS.Signals) => {
+		reap();
+		process.removeListener(sig, onSignal);
+		process.kill(process.pid, sig);
+	};
+	process.on("SIGINT", onSignal);
+	process.on("SIGTERM", onSignal);
+}
+
+export function __resetParentProcessCleanupForTests(): void {
+	__parentProcessCleanupRegistered = false;
+}
+
+parentProcessCleanup();

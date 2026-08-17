@@ -131,10 +131,11 @@ tar xzf .pi/.pisquad/backups/<timestamp>-before-upgrade.tar.gz -C /path/to/proje
 
 | 扩展 | 作用 |
 |---|---|
-| subagent | 把任务委派给隔离上下文的子 pi 进程（single / parallel / chain 三种模式） |
+| subagent | 把任务委派给隔离上下文的子 pi 进程（single / parallel / chain 三种模式）；空闲看门狗以 SIGSTOP 冻结静默子任务，裁决权交还主进程 |
 | codegraph | 包装 codegraph CLI，注册 8 个代码图查询工具（explore / node / query / status / files / callers / callees / impact） |
 | entire | 把 pi 会话事件桥接到外部 Entire CLI（由 Entire 负责 checkpoint / rewind），并给 `bash` 注入 `GIT_TERMINAL_PROMPT=0` 防止交互卡死 |
 | wikilink-lint | 订阅 tool_call，对 `docs/**/*.md` 的 write / edit 做硬阻断：发现指向 docs 外或目标不存在的 `[[...]]` 即拒绝写入 |
+| bash-guard | 在 `bash` 工具调用未显式传 timeout 时注入默认超时（300s）；默认值触发时通知 agent |
 
 ## 文档库
 
@@ -169,7 +170,7 @@ docs/
 │   ├── .pi/             # pi 配置：agents / skills / extensions
 │   │   ├── agents/      # scout / planner / worker / reviewer / archivist
 │   │   ├── skills/      # project-docs / workflow
-│   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint
+│   │   └── extensions/  # subagent / codegraph / entire / wikilink-lint / bash-guard
 │   ├── docs/            # 文档库（模板骨架，详见上节）
 │   └── codegraph.json   # codegraph 配置
 

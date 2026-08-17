@@ -1,6 +1,6 @@
 {
   "name": "@nicklin/pisquad",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Install and upgrade the pi-squad development foundation",
   "type": "module",
   "bin": {
@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "node --test --import tsx test/**/*.test.ts",
+    "test": "TSX_TSCONFIG_PATH=tsconfig.test-runtime.json node --test --test-timeout=120000 --import tsx test/**/*.test.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
