@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "1a7413eaccac",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "docs/conventions/README.md",
+    "docs/conventions/release-verification.md",
+    "docs/current-state.md",
+    "package.json",
+    "src/commands/upgrade.ts",
+    "src/lib/plugins/core.ts",
+    "test/install/core-extension-manifest.test.ts",
+    "test/upgrade/decision.test.ts",
+    "test/upgrade/manifest.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/1a/7413eaccac/0/metadata.json",
+      "transcript": "/1a/7413eaccac/0/full.jsonl",
+      "compact_transcript": "/1a/7413eaccac/0/transcript.jsonl",
+      "content_hash": "/1a/7413eaccac/0/content_hash.txt",
+      "prompt": "/1a/7413eaccac/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 76724,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 169152,
+    "output_tokens": 19119,
+    "api_call_count": 13
+  }
+}

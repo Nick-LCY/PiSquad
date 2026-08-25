@@ -1,0 +1,99 @@
+咧哦姐一下最近的改动（不包括工作区的未commit内容）
+
+---
+
+Task: 侦察本仓库最近的已提交改动（**只看 git 历史，明确排除工作区未 commit 的内容**，不要分析 `git status` 中的脏文件）。
+
+范围：最近 15 个提交，从 4d1eb4e（含）回溯到 ba4e565：
+4d1eb4e docs: ADR 0004 subagent suspension arbitration + 0.3.0 release notes
+c68cb38 feat(subagent): idle suspension arbitration protocol + bash default timeout (0.3.0)
+32a8dfc docs: 同步文档至 0.2.1 现状
+dc041fd chore: bump to 0.2.1
+a139b6a chore: sync project .pi/ from upgrade + update docs for 0.2.0 release
+f741fa8 feat(subagent): add tools_deny blacklist, wildcard support, and subagent recursion prevention
+cf2ba22 chore(archivist): add assets boundary rule — default no-touch
+c8dca98 feat(upgrade): English-only TUI + colored per-file diff
+102b511 feat(upgrade): use arrow-driven select for interactive prompts
+b5cdf6a fix(upgrade): enter interactive mode when tty present and no flag passed
+b5e90e9 feat(upgrade): 交互式 pisquad upgrade
+899239d chore(docs): 净化 assets/docs 为纯通用模板骨架
+31d098a docs: sync post-release state, add ADR 0002 for self-update version check
+17f5b19 fix(cli): compare versions before self-update to avoid re-run loop
+ba4e565 chore: rename npm package to @nicklin/pisquad (scoped)
+
+产出要求（压缩、结构化，中文）：
+1. 按主题分组这 15 个提交（如 subagent 能力、upgrade TUI、npm 包/版本、docs/ADR），说明每组的演进脉络（谁基于谁、解决了什么问题）。
+2. 对核心 feat 提交（c68cb38、f741fa8、b5e90e9→c8dca98 这一串）给出改动规模（`git show --stat` 级别的文件数/增删行）与关键机制要点（例如 suspension 协议怎么工作、tools_deny 支持什么语法、upgrade 交互流程）。
+3. 标注版本节点（0.2.0 / 0.2.1 / 0.3.0 分别对应哪些提交）。
+4. 一句话回答：这批改动的主线是什么。
+
+---
+
+现在我们来讨论两个问题：
+1. 当前的版本 0.3.0 已经publish到npm了，但是实际使用会报错：
+sankabox@7640hs:~/code/MicroDoc$ pi
+Running node v22.23.1 (npm v10.9.8)
+Error: Failed to load extension "/home/sankabox/code/MicroDoc/.pi/extensions/subagent/index.ts": Failed to load extension: Cannot find module '../bash-guard/index.ts'
+Require stack:
+- /home/sankabox/code/MicroDoc/.pi/extensions/subagent/index.ts
+Hint: Start without extensions using "pi -ne".
+2. 上面是一个bug，但是重点是我们要如何增加测试避免以上bug的再次发生。
+
+---
+
+Task: 诊断一个生产 bug 的根因，并盘点测试盲区。
+
+## Bug 现象
+消费者项目（~/code/MicroDoc）运行 `pi` 时报错：
+```
+Error: Failed to load extension "/home/sankabox/code/MicroDoc/.pi/extensions/subagent/index.ts":
+Failed to load extension: Cannot find module '../bash-guard/index.ts'
+Require stack:
+- /home/sankabox/code/MicroDoc/.pi/extensions/subagent/index.ts
+```
+即 0.3.0 发布的包在消费侧安装/升级后，subagent 扩展加载时找不到 `../bash-guard/index.ts`。
+
+## 需要查清的点（按优先级）
+
+1. **引用方式**：`.pi/extensions/subagent/index.ts` 里是如何引用 bash-guard 的？静态 import/require 还是动态？相对路径 `../bash-guard/index.ts` 在 pi 的扩展加载机制下如何解析？为什么找不到（模块不存在 vs 路径解析差异）？
+2. **发布内容**：`package.json` 的 `files` 字段 + `.npmignore`（若有）→ npm tarball 里到底有没有 `assets/.pi/extensions/bash-guard/`？（可以 `npm pack --dry-run` 验证）
+3. **同步链路**：`assets/.pi/` 是真源 → upgrade 时怎么复制到消费者项目？`src/upgrade/` 或 `src/commands/upgrade.ts` 里的复制清单/规则（glob？硬编码清单？）是否覆盖 `assets/.pi/extensions/bash-guard/`？特别注意 0.3.0 新增的 bash-guard 是否被加进了这个清单。
+4. **消费侧现状**：如果能访问 `/home/sankabox/code/MicroDoc/.pi/extensions/`，列一下实际存在哪些扩展目录；对比该项目的 `.pi/.pisquad/install-state.json`（若有）看上次升级记录了什么。
+5. **未 commit 的修复尝试**：工作区有两个脏文件 `.pi/extensions/subagent/{index,suspensions}.ts`，`git diff` 看它们相对 HEAD 改了什么——是否已经在尝试修这个 bug？（这次需要看工作区 diff，之前"排除工作区"的限制解除，仅限这个诊断目的）
+6. **测试盲区盘点**：现有测试体系（vitest？分层：unit / e2e）里，有没有任何测试会真正"加载/require 扩展入口文件"？upgrade 相关测试是纯 mock 还是会落盘验证复制结果？列出关键测试文件与覆盖点，指出为什么这个 bug 没被拦住。
+
+## 产出要求（中文、结构化、压缩）
+- 根因链（A→B→C）明确指出断点在哪一环（发布打包 / 复制清单 / 引用方式 / 加载机制）
+- 每个结论附证据（文件:行号 或 命令输出摘要）
+- 测试盲区清单 + 现有可复用的测试基建（fixtures、harness、e2e 框架）
+- 不要动手修任何东西，纯侦察
+
+---
+
+可以直接按L4来做，避免任何问题。当前工作区的改动你先stash，然后我们完成这个修复再放出来。
+
+---
+
+Task: 为以下 bug 修复 + L4 发布验证测试产出可执行实施计划（worker 会逐字执行）。
+
+## 已确认的根因（scout 诊断，勿重复侦察，可抽查验证）
+0.3.0 新增了 `assets/.pi/extensions/bash-guard/` 扩展，且 `subagent/index.ts:55` 静态 `import { resolveDefaultTimeoutS } from "../bash-guard/index.ts"`。npm tarball 打包正常（`files` 含 `assets`）。但三处硬编码同步清单都没加 bash-guard，导致消费者项目升级后 bash-guard 目录缺失、subagent 加载即炸：
+1. `src/commands/upgrade.ts:144-167` — upgrade 的 `includes` 数组（有 subagent、wikilink-lint，缺 bash-guard）
+2. `src/lib/plugins/core.ts:14-17` — install 的 `EXTENSION_DIRS` 集合（同样缺）
+3. `src/lib/ui.ts:5-9` — `Channels` 类型只有 { core, codegraph, entire }，bash-guard 未建模
+（`src/lib/diff.ts:150-200` diffTree 严格按 pkgIncludes 计算，include 没列等于不存在）
+消费者 MicroDoc 实测：`.pi/extensions/` 只有 codegraph/entire/subagent/wikilink-lint 四个目录。
+
+## 用户决策
+- 修 bug 本体（清单补齐 + Channels 建模决策：bash-guard 归 core 走还是独立 channel，给出理由）
+- 测试策略按 **L4** 落地：发布物级 e2e——`npm pack` → 解包到临时目录 → 用解包后的 dist CLI 对临时目标项目执行 install（和 upgrade，若可行）→ 断言 `assets/.pi/extensions/*` 的**每一个**扩展目录都落到 target → 逐个动态 import target 侧扩展入口（期望无 Cannot find module）。该测试在修复前必须会红（能复现本 bug）。
+- 版本节点：0.3.0 → 0.3.1（注意 `assets/.pi/assets-version.txt` 与 state.json 版本比较语义，参考 `docs/conventions/install-state.md`）
+
+## 已知坑（计划里必须给出对策）
+- **node_modules 解析链**：L4 的临时 target 若放 os.tmpdir()（/tmp），target 侧扩展入口动态 import 外部包（如 pi 内部模块）会解析失败造成假红。对策：临时目录建在**仓库内**（测试后清理），让解析链走到仓库 node_modules。
+- **网络隔离**：upgrade 路径的 self-update 会 `npm view`（网络）。计划需调查 dist CLI 是否有跳过 self-update 的 flag/env；若无法避免，L4 用 install 路径做发布物验证，upgrade 全量落盘断言由现有 `test/upgrade/integration.test.ts` 扩展（in-process、无网络）。给出明确取舍。
+- **长命令超时**：worker 跑 vitest 全量 / npm pack / tsup build 时必须显式传大 timeout（≥600s），避免 300s 默认超时误杀。
+- **禁止**：不得碰 git stash；不得改 `docs/`（archivist 负责）；改动留在工作区不 commit。
+
+## 产出格式
+目标 → 编号步骤（每步：改哪个文件、改什么、验收标准）→ 新建文件清单 → 风险与回滚 → worker 执行注意项。
