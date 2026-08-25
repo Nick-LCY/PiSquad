@@ -1,0 +1,63 @@
+我已经发布了。现在检查一下工作区是什么改动
+
+---
+
+Task: 快速侦察当前工作区未提交改动（quick 级别）：`git diff` 于 `.pi/extensions/subagent/index.ts` 与 `.pi/extensions/subagent/suspensions.ts`。
+
+已知背景：这是一份 stash 恢复回来的 WIP（"usage surfacing"：让子 agent 向主 agent 上报 token 用量）。之前的粗略分析说 index.ts +910/-69（新增 getBuiltinModel import、Usage 类型、getContextWindowFor/loadModelsStore/usageLine/aggregateUsageToUsage/appendUsageLines、SingleResultLite 加 provider? 字段、chain/parallel 结果挂 usage 字段）、suspensions.ts +5。
+
+请给出（中文、压缩）：
+1. 核对 diff 规模与之前分析是否一致（若 stash pop 后有变化要指出）
+2. 这份 WIP 的功能意图一句话 + 关键数据流（用量从哪采、怎么聚合、在哪呈现给主 agent/LLM）
+3. 完成度评估：有没有明显的半成品迹象（未接线的函数、TODO、只写了一半的分支）、有没有被 9bc7242（EXTENSION_DIRS 单源化）影响到的交集
+4. 如果要继续完成它，下一步最该做什么（1-3 条）
+
+不改任何文件。
+
+---
+
+有增加观察子agent对话记录的功能吗？
+
+---
+
+Task: 定向侦察（quick）：`.pi/extensions/subagent/index.ts`（工作区 WIP 版本，非 HEAD）中新增的 `transcript` 子模式，回答"主 agent 能否/如何观察子 agent 的对话记录"。
+
+查清：
+1. **参数面**：transcript 模式的 schema（agent 名？index？steps 数？默认值？），LLM 怎么调用
+2. **能看到什么**：渲染输出的粒度——只有每步一行的 preview（`#step [text|tool] preview`），还是能看到子 agent 的完整对话内容（assistant 文本全文、tool 调用参数、tool 结果）？preview 截断多长？
+3. **数据源与时机**：读 PI_SESSION_FILE 的哪个区段、能否看"正在运行中"的子 agent 还是只能事后回看已结束/被中断的？
+4. **details 通道**：`_makeDetails(mode)(results)` 塞进 details 的内容最终在 TUI 里呈现成什么（是否重现对话流）
+5. **SUBAGENT_DESCRIPTION 里对 transcript 的 LLM-facing 描述原文**（引用关键句）
+
+产出：中文、压缩、附行号。只读不改。
+
+---
+
+是事后看的，而且重点是进程被取消的时候也能看，以及只有主进程主动调用工具的时候才能看到，不是自动注入的，再并且能只看最后n条。这些都满足吧？
+
+---
+
+是的，收尾一下，没问题的话就准备发布0.3.2
+
+---
+
+Task: 定向侦察（medium）：为「usage surfacing + transcript」WIP 的收尾与 0.3.2 发布提供输入。工作区有两个未提交文件：`.pi/extensions/subagent/index.ts`（+910/-69）、`suspensions.ts`（+5）。
+
+## 1. usage 字段消费方验证（核心，决定是否白干）
+WIP 把聚合用量塞进 `AgentToolResult.usage`（pi-ai Usage 对象）。查证：pi host / pi-agent-core（在 node_modules 里，如 `@earendil-works/pi*` 或 pi 主包）是否真的读取工具结果的 `usage` 字段并累加进主会话记账？
+- grep 工具结果消费路径（如 `result.usage` / `toolResult.usage` / `usage?` 合并逻辑），给出证据链（文件:行号）
+- 结论三选一：①读且聚合（写对了）②读但不聚合仅展示 ③完全死字段
+- 若是死字段，评估：仅靠 content 文本行通道是否已达成"主 agent LLM 感知用量"的目的（文本行每条都会回给 LLM）
+
+## 2. 发布同步差距（0.3.2 需要动什么）
+- diff `.pi/extensions/subagent/` vs `assets/.pi/extensions/subagent/`：assets 侧是否还停在 0.3.1（无 WIP）状态，确认需要同步的文件清单
+- 读 `assets/.pi/assets-version.txt` 当前值；依据 `docs/conventions/install-state.md` / ADR 0001 §7 判断：assets 内容变了，此文件是否应 bump 到 0.3.2
+- `package.json` 当前版本（应为 0.3.1）；发布 0.3.2 需要的完整改动清单
+
+## 3. transcript 的 details.results TUI 行为核实
+之前怀疑：transcript 把完整 `results` 塞回 `details` 会让 TUI 重复渲染长历史。查 host 端 subagent 工具结果的 details 渲染路径（extension 里 `renderResult` 的调用方、`DisplayItem` 折叠/截断策略——`COLLAPSED_ITEM_COUNT` 等），判断：回看一个 50+ 条消息的旧子 agent 时 TUI 会不会卡/刷屏；若会，最小修法是什么（如传空 results 或加标志位）
+
+## 4. 测试点盘点（为 worker 补测试提供清单）
+列 WIP 新增的可测纯函数/模块边界（usageLine / getContextWindowFor / aggregateUsageToUsage / appendUsageLines / parseSubagentEntries / pickSubagentEntry / renderTranscript / previewToolCallArgs / previewTextBlock / flattenEntrySteps / singleToLite·liteToSingle 的 provider 往返 / transcript 参数互斥与 lines clamp），标注：是否已从模块导出（还是藏在闭包里）、对应现有测试文件（test/subagent/*.test.ts 的 node:test 风格）、每个建议的断言要点。注意 transcript 读取 PI_SESSION_FILE 的环境依赖如何注入/模拟（看现有测试怎么做 env 注入）。
+
+产出：中文、压缩、按上述四节组织，附文件:行号。只读不改。

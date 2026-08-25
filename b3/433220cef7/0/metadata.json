@@ -1,0 +1,65 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "b3433220cef7",
+  "session_id": "01a036e1-c8fe-7b75-a359-8ec6347737d9",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-25T09:15:29.698488756Z",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "assets/.pi/assets-version.txt",
+    "assets/.pi/extensions/subagent/index.ts",
+    "assets/.pi/extensions/subagent/suspensions.ts",
+    "docs/conventions/release-verification.md",
+    "docs/current-state.md",
+    "package.json",
+    "test/install/core-extension-manifest.test.ts",
+    "test/subagent/transcript.test.ts",
+    "test/upgrade/manifest.test.ts",
+    "tsconfig.test-runtime.json"
+  ],
+  "agent": "Pi",
+  "model": "glm-5.2",
+  "turn_id": "561b802030fa",
+  "checkpoint_transcript_start": 36,
+  "transcript_lines_at_start": 36,
+  "compact_transcript_start": 17,
+  "token_usage": {
+    "input_tokens": 186678,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 273792,
+    "output_tokens": 12242,
+    "api_call_count": 11
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-25T09:15:29.458429577Z",
+    "agent_lines": 1993,
+    "agent_removed": 78,
+    "human_added": 0,
+    "human_modified": 31,
+    "human_removed": 38,
+    "total_committed": 2024,
+    "total_lines_changed": 2210,
+    "agent_percentage": 93.710407239819,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 910,
+      "user_lines_removed": 69,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".pi/extensions/subagent/index.ts": 905,
+        ".pi/extensions/subagent/suspensions.ts": 5
+      },
+      "user_removed_per_file": {
+        ".pi/extensions/subagent/index.ts": 69
+      }
+    }
+  ]
+}
