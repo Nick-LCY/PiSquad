@@ -7,6 +7,7 @@ import {
   type DecisionInput,
 } from "../../src/upgrade/decision.js";
 import type { DiffPlan, PkgInclude } from "../../src/lib/diff.js";
+import { EXTENSION_DIRS } from "../../src/lib/plugins/core.js";
 
 /**
  * Helper: compute a stable sha256 hex from a string (mirrors the default
@@ -79,16 +80,25 @@ function makeSpy(overrides: Partial<DecisionDeps> = {}): Spy {
   return spy;
 }
 
-/** Standard fixture: three interactive includes + two managed. */
+/** Standard fixture: three interactive includes + the core extension set. */
 const INTERACTIVE_INCLUDES: PkgInclude[] = [
   { pkgSubPath: "docs", targetSubPath: "docs", interactive: true },
   { pkgSubPath: ".pi/agents", targetSubPath: ".pi/agents", interactive: true },
   { pkgSubPath: ".pi/skills", targetSubPath: ".pi/skills", interactive: true },
 ];
-const MANAGED_INCLUDES: PkgInclude[] = [
-  { pkgSubPath: ".pi/extensions/subagent", targetSubPath: ".pi/extensions/subagent" },
-  { pkgSubPath: ".pi/extensions/wikilink-lint", targetSubPath: ".pi/extensions/wikilink-lint" },
-];
+/**
+ * Derived from `EXTENSION_DIRS` (single source of truth in
+ * `src/lib/plugins/core.ts`) so a new core extension added there — e.g.
+ * `bash-guard` in 0.3.0 — automatically lands in this fixture. Hardcoding
+ * a parallel list here was the 0.3.1 bug's root cause: the production
+ * `upgrade.ts` includes list and this fixture drifted apart, and the unit
+ * tests lost their red/green signal. See ADR [[architecture/decisions/0004-subagent-suspension-arbitration.md]]
+ * and the L4 contract in `docs/conventions/release-verification.md`.
+ */
+const MANAGED_INCLUDES: PkgInclude[] = Array.from(EXTENSION_DIRS).map((sub) => ({
+  pkgSubPath: `.pi/${sub}`,
+  targetSubPath: `.pi/${sub}`,
+}));
 
 function planFixture(): DiffPlan {
   return {

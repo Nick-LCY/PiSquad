@@ -17,6 +17,7 @@ import {
   type ChannelKey,
 } from "../lib/version.js";
 import { installCodegraph, installEntire } from "../lib/plugins/index.js";
+import { EXTENSION_DIRS } from "../lib/plugins/core.js";
 import { copyDir } from "../lib/copy.js";
 import { selfUpdate } from "../upgrade/self.js";
 import { resolveUpgradeActions, type ResolvedPlan } from "../upgrade/decision.js";
@@ -140,17 +141,24 @@ export async function upgradeCommand(options: UpgradeOptions): Promise<void> {
   //    `resolveUpgradeActions`. Extension packages are managed by the
   //    pisquad release process — they are always overwritten, never
   //    presented for per-file adoption.
+  //
+  //    Core extension subtrees are projected from `EXTENSION_DIRS`
+  //    (single source of truth in `src/lib/plugins/core.ts`) so a new
+  //    core extension added there automatically lands in the upgrade
+  //    diff — preventing the 0.3.1 silent-degradation bug where
+  //    `bash-guard` was installed but never reached via `upgrade`.
+  //    Entries inside EXTENSION_DIRS are `.pi`-relative (e.g.
+  //    `extensions/subagent`), so we prepend `.pi/` here to form the
+  //    `PkgInclude` paths the diff layer expects.
   const includes: PkgInclude[] = [
     { pkgSubPath: ".pi/agents", targetSubPath: ".pi/agents", interactive: true },
     { pkgSubPath: ".pi/skills", targetSubPath: ".pi/skills", interactive: true },
-    {
-      pkgSubPath: ".pi/extensions/subagent",
-      targetSubPath: ".pi/extensions/subagent",
-    },
-    {
-      pkgSubPath: ".pi/extensions/wikilink-lint",
-      targetSubPath: ".pi/extensions/wikilink-lint",
-    },
+    ...Array.from(EXTENSION_DIRS).map(
+      (sub): PkgInclude => ({
+        pkgSubPath: `.pi/${sub}`,
+        targetSubPath: `.pi/${sub}`,
+      }),
+    ),
     { pkgSubPath: "docs", targetSubPath: "docs", interactive: true },
   ];
   if (newChannels.codegraph) {

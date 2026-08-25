@@ -6,19 +6,37 @@ import { existsSync } from "node:fs";
 import type { PluginOptions } from "./types.js";
 
 /**
- * Core-only extension directories. Only the always-on extensions ship with
- * the core channel. Optional extensions (codegraph, entire) are copied by
- * their own channel plugins (`installCodegraph`, `installEntire`) so that
- * `--yes` (core only) never copies code whose `node_modules` we cannot ship.
+ * Single source of truth for the core-channel extension set. Both the
+ * `install` path (`installCore` below) and the `upgrade` path
+ * (`src/commands/upgrade.ts` `includes` array) must derive their managed
+ * includes from this set so a new core extension lands in both code paths
+ * in lockstep. See ADR [[architecture/decisions/0004-subagent-suspension-arbitration.md]]
+ * and the L4 contract in `docs/conventions/release-verification.md`.
+ *
+ * Entries are paths relative to `assets/.pi/` (i.e. the install root for
+ * extensions). The upgrade pipeline prepends `.pi/` when projecting this
+ * set into `PkgInclude` form.
+ *
+ * `bash-guard` is a core extension: it injects a 300s default timeout on
+ * every bash tool call (so deadlocked sub-agents fail fast instead of
+ * hanging the parent chain), and teaches the LLM via three complementary
+ * surfaces when that default fires. It has no `node_modules` and ships
+ * directly from `assets/.pi/extensions/bash-guard/index.ts`.
+ *
+ * Optional extensions (codegraph, entire) are NOT in this set: they are
+ * copied by their own channel plugins (`installCodegraph`, `installEntire`)
+ * so that `--yes` (core only) never copies code whose `node_modules` we
+ * cannot ship.
  */
-const EXTENSION_DIRS = new Set([
+export const EXTENSION_DIRS = new Set([
   "extensions/subagent",
   "extensions/wikilink-lint",
+  "extensions/bash-guard",
 ]);
 
 /**
  * Copy the "core" payload (agents, skills, only the always-on extensions
- * subagent + wikilink-lint source trees).
+ * subagent + wikilink-lint + bash-guard source trees).
  *
  * The optional codegraph / entire extensions are NOT copied here — they are
  * installed by their own channel plugins when the user passes `--with`. This
