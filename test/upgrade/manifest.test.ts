@@ -170,6 +170,39 @@ describe("L4 · core extension manifest ships via upgrade", () => {
         "bash-guard source must contain its timeout constant after upgrade",
       );
 
+      // Mirror of test/install/core-extension-manifest.test.ts —
+      // 0.3.2 WIP: pin the usage-surfacing + transcript SEMANTIC
+      // tokens in the upgraded subagent/index.ts copy, not its
+      // exact byte layout. Per
+      // [[conventions/release-verification.md]], L4 fixtures must
+      // not mirror production exports; we assert the FEATURE
+      // (aggregateUsageToUsage + appendUsageLines + renderTranscript
+      // + cost.total) so a future refactor that reshuffles the
+      // module doesn't trip L4 as long as the LLM-facing behavior
+      // stays the same.
+      const subagentSrc = join(extRoot, "subagent", "index.ts");
+      const subagentContent = readFileSync(subagentSrc, "utf-8");
+      assert.match(
+        subagentContent,
+        /\baggregateUsageToUsage\b/,
+        "subagent/index.ts must export aggregateUsageToUsage after upgrade (0.3.2 WIP)",
+      );
+      assert.match(
+        subagentContent,
+        /\bappendUsageLines\b/,
+        "subagent/index.ts must export appendUsageLines after upgrade (0.3.2 WIP)",
+      );
+      assert.match(
+        subagentContent,
+        /\brenderTranscript\b/,
+        "subagent/index.ts must export renderTranscript after upgrade (0.3.2 WIP)",
+      );
+      assert.match(
+        subagentContent,
+        /cost\.total/,
+        "subagent/index.ts must surface cost.total after upgrade (0.3.2 WIP)",
+      );
+
       // Cleanup. Use rmSync with recursive to ensure nested dirs
       // (.pi/extensions/bash-guard, .pi/.pisquad, ...) are gone.
       rmSync(target, { recursive: true, force: true });

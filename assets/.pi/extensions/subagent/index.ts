@@ -38,9 +38,11 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as readline from "node:readline";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Message } from "@earendil-works/pi-ai";
+import type { Message, Usage } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import {
 	CONFIG_DIR_NAME,
 	type ExtensionAPI,
@@ -110,8 +112,16 @@ function resolveIdleTimeoutMs(): number {
 const DEFAULT_TAIL_LINES = 10;
 /** Default number of tail events returned by `inspect` when caller omits `lines`. */
 const DEFAULT_INSPECT_LINES = 50;
+/** Default number of trailing work steps returned by `transcript` when caller omits `lines`. */
+const DEFAULT_TRANSCRIPT_LINES = 10;
+/** Hard upper bound on `transcript.lines` to bound output size. */
+const MAX_TRANSCRIPT_LINES = 50;
+/** Preview length for tool-call argument fields (bash command, file path, etc.). */
+const TRANSCRIPT_ARG_PREVIEW_LEN = 100;
+/** Preview length for the task description in the transcript header line. */
+const TRANSCRIPT_TASK_PREVIEW_LEN = 80;
 
-function formatTokens(count: number): string {
+export function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
 	if (count < 1000000) return `${Math.round(count / 1000)}k`;
@@ -142,6 +152,169 @@ function formatUsageStats(
 	}
 	if (model) parts.push(model);
 	return parts.join(" ");
+}
+
+/* -------------------------------------------------------------------------- */
+/*                       Usage surfacing for the LLM                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Resolve a model's `contextWindow` via the pi-ai builtin catalog.
+ *
+ * The catalog is the source of truth for model metadata — rather
+ * than hardcoding `claude-opus-4-7 → 1_000_000` etc., we ask
+ * `getBuiltinModel(provider, model)`. If either id is missing /
+ * unknown, or the catalog has no entry for the pair, we fall back
+ * to `undefined` and let `usageLine` render `(window unknown)`.
+ *
+ * `getBuiltinModel` is imported from `@earendil-works/pi-ai/providers/all`
+ * — `getModel` in pi-ai 0.81.x is still an `@deprecated`
+ * re-export, so we sidestep the deprecated path and pull the
+ * catalog entry directly from `providers/all`.
+ *
+ * Two normalization steps are needed because sub-processes
+ * report `msg.model` as `provider/model` (e.g. `minimax-cn/MiniMax-M3`)
+ * while the catalog + remote store key models by bare id:
+ *
+ *   1. Strip a leading `provider/` prefix from `model` before any
+ *      lookup.
+ *   2. If the builtin catalog misses (the model is from a remote
+ *      provider such as minimax-cn whose catalog lives in
+ *      `~/.pi/agent/models-store.json` rather than the bundled
+ *      builtin catalog), fall back to scanning that store. The
+ *      store is loaded once at module level and cached; any read
+ *      or parse failure keeps the unknown-downgrade behavior.
+ */
+export function getContextWindowFor(provider: string | undefined, model: string | undefined): number | undefined {
+	if (!provider || !model) return undefined;
+	const prefix = `${provider}/`;
+	const bareId = model.startsWith(prefix) ? model.slice(prefix.length) : model;
+	try {
+		const entry = getBuiltinModel(provider as Parameters<typeof getBuiltinModel>[0], bareId);
+		if (entry?.contextWindow !== undefined) return entry.contextWindow;
+	} catch {
+		// fall through to remote store lookup
+	}
+	// Fallback: remote provider catalog at ~/.pi/agent/models-store.json.
+	// Shape: { [providerId]: { models: [ { id, contextWindow, ... } ] } }
+	return lookupContextWindowInStore(provider, bareId);
+}
+
+/** Lazy-loaded remote model store. `null` while not yet loaded; `false`
+ *  after a load attempt failed (so we don't keep retrying on every call). */
+let modelsStore: Record<string, { models?: Array<{ id?: string; contextWindow?: number }> }> | null | undefined;
+
+function loadModelsStore(): Record<string, { models?: Array<{ id?: string; contextWindow?: number }> }> | null {
+	if (modelsStore !== undefined) return modelsStore ?? null;
+	try {
+		const raw = fs.readFileSync(path.join(os.homedir(), ".pi", "agent", "models-store.json"), "utf8");
+		const parsed = JSON.parse(raw);
+		modelsStore = parsed && typeof parsed === "object" ? (parsed as Record<string, { models?: Array<{ id?: string; contextWindow?: number }> }>) : null;
+	} catch {
+		modelsStore = null;
+	}
+	return modelsStore ?? null;
+}
+
+function lookupContextWindowInStore(provider: string, bareId: string): number | undefined {
+	const store = loadModelsStore();
+	if (!store) return undefined;
+	const entry = store[provider];
+	const models = entry?.models;
+	if (!Array.isArray(models)) return undefined;
+	for (const m of models) {
+		if (m && m.id === bareId) return m.contextWindow;
+	}
+	return undefined;
+}
+
+/**
+ * Render a single result's usage as one line, intended to be
+ * appended to the textual `content` of a final `AgentToolResult`
+ * so the calling LLM can see what each sub-agent consumed.
+ *
+ * Format:
+ *   `[subagent usage] <agent> · <model> · <n> turn[s] · ↑<input> ↓<output> · ctx <tokens>/<window> (<pct>%) · $<cost>`
+ *
+ * When the catalog does not know the model, the context section
+ * degrades to `ctx <tokens> (window unknown)`. When `usage.turns`
+ * is 0 (the agent never produced an assistant message, e.g. an
+ * "unknown agent" error result), the line still renders so the LLM
+ * sees a zero-turn marker.
+ *
+ * Accepts both `SingleResult` and the structurally-identical
+ * `SingleResultLite` shape (used by the resume / kill path).
+ */
+export function usageLine(
+	r: {
+		agent: string;
+		model?: string;
+		provider?: string;
+		usage: { input: number; output: number; cost: number; contextTokens: number; turns: number };
+	},
+	contextWindow?: number,
+): string {
+	const u = r.usage;
+	const turns = `${u.turns} turn${u.turns === 1 ? "" : "s"}`;
+	const inOut = `↑${formatTokens(u.input)} ↓${formatTokens(u.output)}`;
+	const cost = `$${u.cost.toFixed(4)}`;
+	let ctx: string;
+	if (contextWindow && contextWindow > 0) {
+		const pct = u.contextTokens > 0 ? Math.round((u.contextTokens / contextWindow) * 100) : 0;
+		ctx = `ctx ${formatTokens(u.contextTokens)}/${formatTokens(contextWindow)} (${pct}%)`;
+	} else {
+		ctx = `ctx ${formatTokens(u.contextTokens)} (window unknown)`;
+	}
+	const modelLabel = r.model ?? "?";
+	return `[subagent usage] ${r.agent} · ${modelLabel} · ${turns} · ${inOut} · ${ctx} · ${cost}`;
+}
+
+/**
+ * Append one `[subagent usage] ...` line per result to the given
+ * text, separated from the prior content by a blank line. Returns
+ * the original text unchanged when `results` is empty.
+ */
+export function appendUsageLines(text: string, results: ReadonlyArray<SingleResult | SingleResultLite>): string {
+	if (results.length === 0) return text;
+	const lines = results.map((r) => usageLine(r, getContextWindowFor(r.provider, r.model)));
+	return `${text}\n\n${lines.join("\n")}`;
+}
+
+/**
+ * Aggregate an array of results into a single `Usage` object,
+ * suitable for the structured `AgentToolResult.usage` field.
+ *
+ * `totalTokens` is set to the SUM of every result's last-known
+ * contextTokens (i.e. the running total of context size across
+ * all sub-agents at their final assistant message). It is NOT a
+ * "context budget" — for multi-result tools the LLM gets the sum
+ * so it can sanity-check whether the cumulative call ran close
+ * to overflowing.
+ *
+ * `UsageStats` has no per-component cost breakdown, so the
+ * summed cost is reported as `cost.total` while the per-component
+ * fields (input / output / cacheRead / cacheWrite) are all
+ * left at 0. pi-ai's downstream code reads `total`; the
+ * breakdown is informational.
+ */
+export function aggregateUsageToUsage(results: ReadonlyArray<SingleResult | SingleResultLite>): Usage {
+	const input = results.reduce((s, r) => s + (r.usage.input || 0), 0);
+	const output = results.reduce((s, r) => s + (r.usage.output || 0), 0);
+	const cacheRead = results.reduce((s, r) => s + (r.usage.cacheRead || 0), 0);
+	const cacheWrite = results.reduce((s, r) => s + (r.usage.cacheWrite || 0), 0);
+	const totalTokens = results.reduce((s, r) => s + (r.usage.contextTokens || 0), 0);
+	const costTotal = results.reduce((s, r) => s + (r.usage.cost || 0), 0);
+	// We don't track per-component cost in `UsageStats`, so split
+	// the total proportionally to token share — or just pin all
+	// four to the total when there's only one component. Simpler:
+	// when there is exactly one result, mirror its cost.total into
+	// `total` and leave the per-component breakdown as 0 (the
+	// per-provider assistant messages never made it through to
+	// here anyway). For multi-result, set `total` to the sum and
+	// pin everything else to 0 too — pi-ai's downstream code
+	// reads `total`, the breakdown is informational.
+	const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal };
+	return { input, output, cacheRead, cacheWrite, totalTokens, cost };
 }
 
 function formatToolCall(
@@ -231,6 +404,11 @@ interface SingleResult {
 	stderr: string;
 	usage: UsageStats;
 	model?: string;
+	/** Provider id from the first assistant message. Mirrors
+	 *  `AssistantMessage.provider` in `@earendil-works/pi-ai`. Used
+	 *  by `usageLine` to resolve `contextWindow` via
+	 *  `getBuiltinModel(provider, model)`. */
+	provider?: string;
 	stopReason?: string;
 	errorMessage?: string;
 	step?: number;
@@ -546,6 +724,7 @@ function liteToSingle(lite: SingleResultLite): SingleResult {
 		stderr: lite.stderr,
 		usage: lite.usage,
 		model: lite.model,
+		provider: lite.provider,
 		stopReason: lite.stopReason,
 		errorMessage: lite.errorMessage,
 		step: lite.step,
@@ -562,6 +741,7 @@ function singleToLite(r: SingleResult): SingleResultLite {
 		stderr: r.stderr,
 		usage: r.usage,
 		model: r.model,
+		provider: r.provider,
 		stopReason: r.stopReason,
 		errorMessage: r.errorMessage,
 		step: r.step,
@@ -663,6 +843,10 @@ async function runSingleAgent(
 		model: effectiveModel,
 		step,
 	};
+	// `provider` is set lazily when the first assistant message
+	// arrives (see processLine below); the final ToolResult uses it
+	// together with `model` to resolve `contextWindow` via
+	// `getBuiltinModel(provider, model)`.
 
 	const emitUpdate = () => {
 		if (onUpdate) {
@@ -838,6 +1022,7 @@ async function runSingleAgent(
 							currentResult.usage.contextTokens = usage.totalTokens || 0;
 						}
 						if (!currentResult.model && msg.model) currentResult.model = msg.model;
+						if (!currentResult.provider && msg.provider) currentResult.provider = msg.provider;
 						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
 						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
 					}
@@ -1020,6 +1205,56 @@ const InspectParams = Type.Object({
 	lines: Type.Optional(Type.Number({ description: `Number of tail lines to return (default ${DEFAULT_INSPECT_LINES})`, default: DEFAULT_INSPECT_LINES })),
 });
 
+/**
+ * Read-only query parameters for the `transcript` mode.
+ *
+ * `transcript` reads the host session's persistent jsonl (via the
+ * `PI_SESSION_FILE` env var) and renders the last N work steps of a
+ * previously-completed subagent invocation. It does NOT spawn, resume,
+ * or kill any process — purely diagnostic, useful when an interrupt
+ * (Esc / kill / suspended-then-failed) happened in a prior turn and
+ * the LLM only got a one-line summary back.
+ *
+ * Filtering
+ * ---------
+ * - `only: "interrupted"` (default) — picks results where any result
+ *   in the entry satisfies `exitCode !== 0 || stopReason !== "stop"
+ *   || suspensions.length > 0`. This is the default because the use
+ *   case for transcript is "I aborted a subagent; show me what it
+ *   was doing before I killed it."
+ * - `only: "all"` — no filter; pick by `agent` / `index`.
+ *
+ * Indexing
+ * --------
+ * - `index: 0` (default) — the most recent match.
+ * - `index: 1` — the second-most-recent match. And so on.
+ *
+ * The matcher walks the jsonl in chronological order and keeps only
+ * the matching entries; the index picks the n-th from the END (so
+ * `index: 0` is the LAST match, `index: 1` the one before it).
+ */
+const TranscriptParams = Type.Object({
+	lines: Type.Optional(
+		Type.Number({
+			description: `Number of trailing work steps to render (default ${DEFAULT_TRANSCRIPT_LINES}, max ${MAX_TRANSCRIPT_LINES})`,
+			default: DEFAULT_TRANSCRIPT_LINES,
+		}),
+	),
+	agent: Type.Optional(Type.String({ description: "Filter by agent name (matches the agent field of any result in the entry)" })),
+	index: Type.Optional(
+		Type.Number({
+			description: "Which match to inspect (0 = most recent, default 0). 1 = second-most-recent, etc.",
+			default: 0,
+		}),
+	),
+	only: Type.Optional(
+		StringEnum(["interrupted", "all"] as const, {
+			description: "Filter set. 'interrupted' (default) selects entries that exited non-zero or have any non-stop stopReason or any suspensions. 'all' selects every subagent toolResult.",
+			default: "interrupted",
+		}),
+	),
+});
+
 const SubagentParams = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
@@ -1031,6 +1266,9 @@ const SubagentParams = Type.Object({
 	resume: Type.Optional(Type.String({ description: "Suspension id to resume — thaws the frozen process group and continues collecting events" })),
 	kill: Type.Optional(Type.String({ description: "Suspension id to kill — thaws the frozen process group, SIGKILLs it, returns the partial transcript" })),
 	inspect: Type.Optional(InspectParams),
+	transcript: Type.Optional(
+		TranscriptParams,
+	),
 });
 
 /* -------------------------------------------------------------------------- */
@@ -1072,6 +1310,9 @@ const SUBAGENT_DESCRIPTION = [
 	"  - `inspect: { id: <suspensionId>, lines?: number }` — return more tail lines of the frozen process without touching it.",
 	"The snapshot exposes `suspensionId`, `idleMs`, `runningCommand` (the in-flight bash command, if any), `requestedTimeout` (the timeout the agent asked for), and a `tail` array of recent events.",
 	"`resume` / `kill` / `inspect` cannot be combined with `agent` / `task` / `tasks` / `chain`; pick exactly one mode per call.",
+	"",
+	"Post-mortem transcript (read-only): when a subagent was interrupted (Esc abort / kill / suspended-then-failed) in a prior turn and the host returned only a one-line summary, call this tool with `transcript` to render the last N work steps of that subagent straight from the host session's persistent jsonl. Pure read — no process is touched, no registry mutation. Schema: `transcript: { lines?: number = 10 (max 50), agent?: string, index?: number = 0 (0 = most recent), only?: \"interrupted\" | \"all\" = \"interrupted\" }`. Use it after `kill` / abort to see what the agent was doing before it died.",
+	"`transcript` cannot be combined with `agent` / `task` / `tasks` / `chain` / `resume` / `kill` / `inspect`; pick exactly one mode per call. Requires the host session to have a persistent file (env var `PI_SESSION_FILE` must be set); ephemeral sessions (e.g. `--no-session`) have no on-disk history to read.",
 	`Sub-agent bash calls carry a ${SUBAGENT_DEFAULT_BASH_TIMEOUT_S}s default timeout (bash-guard); when delegating long-running commands, instruct the agent to pass an explicit "timeout".`,
 ].join(" ");
 
@@ -1123,8 +1364,9 @@ export default function (pi: ExtensionAPI) {
 			const hasResume = typeof params.resume === "string";
 			const hasKill = typeof params.kill === "string";
 			const hasInspect = params.inspect !== undefined;
+			const hasTranscript = params.transcript !== undefined;
 			const arbitrationCount = Number(hasResume) + Number(hasKill) + Number(hasInspect);
-			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
+			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle) + Number(hasTranscript);
 
 			const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 			const makeDetails =
@@ -1155,7 +1397,18 @@ export default function (pi: ExtensionAPI) {
 					content: [
 						{
 							type: "text",
-							text: "Invalid parameters: arbitration parameters (`resume`/`kill`/`inspect`) cannot be combined with execution modes (`agent`/`task`/`tasks`/`chain`).",
+							text: "Invalid parameters: arbitration parameters (`resume`/`kill`/`inspect`) cannot be combined with execution modes (`agent`/`task`/`tasks`/`chain`/`transcript`).",
+						},
+					],
+					details: makeDetails("single")([]),
+				};
+			}
+			if (hasTranscript && modeCount > 1) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Invalid parameters: `transcript` (read-only post-mortem) cannot be combined with execution modes (`agent`/`task`/`tasks`/`chain`).",
 						},
 					],
 					details: makeDetails("single")([]),
@@ -1165,6 +1418,7 @@ export default function (pi: ExtensionAPI) {
 			if (hasResume) return handleResume(params.resume as string, signal, onUpdate, ctx, agents, allToolNames, agentScope, discovery, makeDetails, params.model);
 			if (hasKill) return handleKill(params.kill as string, ctx, makeDetails);
 			if (hasInspect) return handleInspect(params.inspect!, ctx, makeDetails);
+			if (hasTranscript) return handleTranscript(params.transcript!, makeDetails);
 
 			if (modeCount !== 1) {
 				return {
@@ -1222,6 +1476,19 @@ export default function (pi: ExtensionAPI) {
 					theme.fg("toolTitle", theme.bold("subagent ")) +
 						theme.fg("accent", `inspect`) +
 						theme.fg("muted", ` ${args.inspect.id} (${lines} lines)`),
+					0,
+					0,
+				);
+			}
+			if (args.transcript) {
+				const lines = args.transcript.lines ?? DEFAULT_TRANSCRIPT_LINES;
+				const only = args.transcript.only ?? "interrupted";
+				const agent = args.transcript.agent ? ` agent=${args.transcript.agent}` : "";
+				const index = args.transcript.index ? ` idx=${args.transcript.index}` : "";
+				return new Text(
+					theme.fg("toolTitle", theme.bold("subagent ")) +
+						theme.fg("accent", `transcript`) +
+						theme.fg("muted", ` only=${only} lines=${lines}${agent}${index}`),
 					0,
 					0,
 				);
@@ -1587,6 +1854,509 @@ export default function (pi: ExtensionAPI) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*                       Transcript (read-only post-mortem)                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One subagent toolResult entry as parsed from a host session's
+ * persistent jsonl file. Shape mirrors the `details` payload that
+ * the tool itself returns — same `results` / `suspensions` keys,
+ * same `mode`. We keep `lineNumber` for debugging / error messages
+ * (e.g. "Found 3 matching entries in <file> at lines 412, 891, 1520")
+ * and `timestamp` for chronological ordering / filtering if needed.
+ *
+ * `results` and `suspensions` are taken straight from the entry's
+ * `details` — they share the SingleResult / SuspendedSnapshot
+ * shape that the tool emits in-process. We do NOT re-validate the
+ * shape (the jsonl is a write-once source of truth from this same
+ * extension), but we do defend against `details` being undefined
+ * or malformed by checking the entry-level discriminator before
+ * storing it.
+ */
+export interface SubagentJsonlEntry {
+	lineNumber: number;
+	timestamp: string;
+	mode: "single" | "parallel" | "chain";
+	results: SingleResult[];
+	suspensions: SuspendedSnapshot["suspensions"];
+}
+
+/**
+ * Options accepted by `renderTranscript`. Mirrors the typebox
+ * `TranscriptParams` schema 1:1 so the LLM-facing parameter shape
+ * and the pure-render shape stay in lockstep. Defaults match the
+ * schema defaults (handled at the schema layer via typebox
+ * `default`, but `renderTranscript` is also safe when called
+ * directly with any subset of these fields).
+ */
+export interface RenderTranscriptOpts {
+	lines?: number;
+	agent?: string;
+	index?: number;
+	only?: "interrupted" | "all";
+}
+
+/**
+ * Parse a host session's persistent jsonl file streamingly (line
+ * by line — NEVER read the whole file into memory) and collect
+ * every entry whose message is a subagent toolResult.
+ *
+ * Why streaming? Host sessions can grow into the tens of
+ * megabytes (we have observed 10MB+ files for long agentic
+ * sessions). Loading the entire file as one string + parsing as
+ * one JSON would be O(N) memory in the file size and would
+ * defeat the "post-mortem on a large session" use case. Reading
+ * line by line keeps memory at O(1) in the file size — at any
+ * moment we only hold the current line buffer plus the
+ * accumulated entries.
+ *
+ * The streamer is intentionally permissive about parse failures
+ * on individual lines (a single corrupted line must not abort the
+ * whole read — we'd lose every subsequent entry). The parser
+ * silently skips lines that:
+ *   - are empty or whitespace-only
+ *   - fail JSON.parse (returns invalid JSON)
+ *   - are JSON but have the wrong shape (no `message` object,
+ *     `message.role !== "toolResult"`, `message.toolName !==
+ *     "subagent"`, missing `details.results`, etc.)
+ *
+ * Tolerant parsing is the right call here because the only
+ * consumer is the post-mortem tool, not a correctness-critical
+ * path. A skipped line is preferable to an empty transcript for
+ * a session that was 99% intact.
+ */
+export async function parseSubagentEntries(sessionFilePath: string): Promise<SubagentJsonlEntry[]> {
+	const entries: SubagentJsonlEntry[] = [];
+	const stream = fs.createReadStream(sessionFilePath, { encoding: "utf8" });
+	const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+	let lineNumber = 0;
+	try {
+		for await (const rawLine of rl) {
+			lineNumber++;
+			const line = rawLine.trim();
+			if (!line) continue;
+			let parsed: any;
+			try {
+				parsed = JSON.parse(line);
+			} catch {
+				continue;
+			}
+			const message = parsed?.message;
+			if (!message || typeof message !== "object") continue;
+			if (message.role !== "toolResult") continue;
+			if (message.toolName !== "subagent") continue;
+			const details = message.details;
+			if (!details || typeof details !== "object") continue;
+			const mode = details.mode;
+			if (mode !== "single" && mode !== "parallel" && mode !== "chain") continue;
+			const results = Array.isArray(details.results) ? (details.results as SingleResult[]) : [];
+			const suspensions = Array.isArray(details.suspensions)
+				? (details.suspensions as SuspendedSnapshot["suspensions"])
+				: [];
+			entries.push({
+				lineNumber,
+				timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
+				mode,
+				results,
+				suspensions,
+			});
+		}
+	} finally {
+		rl.close();
+		stream.destroy();
+	}
+	return entries;
+}
+
+/**
+ * Predicate that matches the user spec's definition of an
+ * "interrupted" entry: any result in the entry that exited
+ * non-zero, has a non-stop stopReason, OR the entry itself
+ * carries one or more suspension snapshots.
+ *
+ * The disjunctive form mirrors the in-process `isFailedResult`
+ * + suspension-frozen check that the watch dog uses; a parallel
+ * invocation with one suspended sibling qualifies as interrupted
+ * even if every other sibling exited cleanly, because the
+ * surviving sibling's SIGSTOP is itself the "freeze" signal the
+ * parent LLM needs to understand.
+ */
+export function isInterruptedEntry(entry: SubagentJsonlEntry): boolean {
+	if (entry.suspensions.length > 0) return true;
+	for (const r of entry.results) {
+		if (r.exitCode !== 0) return true;
+		if (r.stopReason && r.stopReason !== "stop") return true;
+	}
+	return false;
+}
+
+/**
+ * Render a one-line preview of a tool-call argument for the
+ * transcript body. Mirrors `formatToolCall`'s dispatch but is
+ * text-only (no theme) because the transcript output goes back
+ * to the LLM verbatim, not to the TUI.
+ *
+ *   bash → command (first 100 chars)
+ *   read / write / edit → file_path (first 100 chars)
+ *   anything else → JSON.stringify(arguments) (first 100 chars)
+ *
+ * The 100-char cap matches the user spec's "关键参数前 100 字符".
+ * Newlines are flattened to single spaces so the rendered output
+ * stays one line per step (the transcript body is parsed back by
+ * the LLM as a list; embedded newlines would either break
+ * downstream parsers or require extra escaping).
+ */
+export function previewToolCallArgs(name: string, args: Record<string, unknown>): string {
+	const cap = (s: string) => {
+		const flat = s.replace(/\s+/g, " ").trim();
+		return flat.length > TRANSCRIPT_ARG_PREVIEW_LEN
+			? `${flat.slice(0, TRANSCRIPT_ARG_PREVIEW_LEN)}...`
+			: flat;
+	};
+	switch (name) {
+		case "bash": {
+			const cmd = typeof args.command === "string" ? args.command : "";
+			return cap(cmd);
+		}
+		case "read":
+		case "write":
+		case "edit": {
+			const p = args.file_path ?? args.path;
+			return cap(typeof p === "string" ? p : "");
+		}
+		default: {
+			try {
+				return cap(JSON.stringify(args));
+			} catch {
+				return cap(String(args));
+			}
+		}
+	}
+}
+
+/**
+ * Render a one-line preview of an assistant text block for the
+ * transcript body. Takes the FIRST non-empty line only and caps
+ * at `TRANSCRIPT_ARG_PREVIEW_LEN` (100) characters, per the user
+ * spec. Empty strings are surfaced as the literal "(empty)" so
+ * the LLM sees an explicit marker instead of guessing why a
+ * step has no visible content.
+ */
+export function previewTextBlock(text: string): string {
+	const firstLine = text.split("\n").find((l) => l.trim().length > 0) ?? "";
+	if (!firstLine) return "(empty)";
+	const flat = firstLine.replace(/\s+/g, " ").trim();
+	return flat.length > TRANSCRIPT_ARG_PREVIEW_LEN
+		? `${flat.slice(0, TRANSCRIPT_ARG_PREVIEW_LEN)}...`
+		: flat;
+}
+
+/**
+ * Flatten a subagent entry's `messages` array into the same
+ * `[text, toolCall]` items that `getDisplayItems` produces
+ * (which the tool renderer uses for the in-process view). Reused
+ * here so the transcript output matches what the LLM would have
+ * seen if the entry's display had been expanded in the TUI.
+ *
+ * Step numbering is 1-based across the FLATTENED list, matching
+ * the user spec's "#1, #2, ..." convention.
+ */
+function flattenEntrySteps(entry: SubagentJsonlEntry): DisplayItem[] {
+	const items: DisplayItem[] = [];
+	for (const r of entry.results) {
+		for (const msg of r.messages) {
+			if (msg.role !== "assistant") continue;
+			for (const part of msg.content) {
+				if (part.type === "text") items.push({ type: "text", text: part.text });
+				else if (part.type === "toolCall") items.push({ type: "toolCall", name: part.name, args: part.arguments });
+			}
+		}
+	}
+	return items;
+}
+
+/**
+ * Pick one subagent entry out of `entries` according to the
+ * filter+index contract documented on `TranscriptParams`. Returns
+ * `{ kind: "found", entry }` on success, or
+ * `{ kind: "no_session_file", reason }` /
+ * `{ kind: "no_matches", totalMatches, totalAfterFilter }` /
+ * `{ kind: "index_out_of_range", totalMatches, requested }` on
+ * the three failure paths the user spec requires.
+ *
+ * `only: "interrupted"` uses `isInterruptedEntry`. `only: "all"`
+ * passes through. `agent` filters by membership in the entry's
+ * results list (case-sensitive match against `r.agent`). The
+ * index counts from 0 = most recent (i.e. the LAST match in
+ * chronological order, since the jsonl is in write order).
+ */
+export type PickResult =
+	| { kind: "found"; entry: SubagentJsonlEntry }
+	| { kind: "no_matches"; totalMatches: number }
+	| { kind: "index_out_of_range"; totalMatches: number; requested: number };
+
+export function pickSubagentEntry(
+	entries: ReadonlyArray<SubagentJsonlEntry>,
+	opts: RenderTranscriptOpts,
+): PickResult {
+	const only = opts.only ?? "interrupted";
+	const matches = entries.filter((e) => {
+		if (only === "interrupted" && !isInterruptedEntry(e)) return false;
+		if (opts.agent !== undefined) {
+			const want = opts.agent;
+			if (!e.results.some((r) => r.agent === want)) return false;
+		}
+		return true;
+	});
+	if (matches.length === 0) {
+		return { kind: "no_matches", totalMatches: 0 };
+	}
+	const index = opts.index ?? 0;
+	// matches is in chronological (write) order; "most recent" is
+	// the LAST element, "second-most-recent" the one before, etc.
+	const target = matches[matches.length - 1 - index];
+	if (!target) {
+		return { kind: "index_out_of_range", totalMatches: matches.length, requested: index };
+	}
+	return { kind: "found", entry: target };
+}
+
+/**
+ * Pure render of a single subagent entry to the transcript text
+ * the LLM receives. The exported surface is intentionally
+ * side-effect-free so the validation script can call it directly
+ * with synthetic entries; `handleTranscript` (the execute()
+ * dispatch) is just a thin shell that loads `entries` via
+ * `parseSubagentEntries`, calls `pickSubagentEntry`, and either
+ * formats the success path via this function or surfaces the
+ * failure message verbatim.
+ *
+ * The output shape (per user spec):
+ *
+ *     [transcript] <agent> · <model> · stopReason=<x> exit=<n> · <m> msgs · task: <first 80 chars>...
+ *     最后 <N> 步：
+ *       #<i> [<tool|text>] <preview>
+ *       #<i+1> ...
+ *     [subagent usage] <agent> · <model> · <turns> · ↑<in> ↓<out> · ctx <ctx>/<window> (<pct>%) · $<cost>
+ *
+ * `lines` is clamped to `[1, MAX_TRANSCRIPT_LINES]` to guard
+ * against LLM-supplied nonsense (negative numbers, NaN, 10000)
+ * — clamping to 1 instead of erroring matches the "best effort"
+ * posture of the rest of the read-only path; the LLM can always
+ * re-call with a different value if it wants more.
+ */
+export function renderTranscript(
+	entry: SubagentJsonlEntry,
+	opts: RenderTranscriptOpts,
+): string {
+	const lines = Math.max(
+		1,
+		Math.min(
+			MAX_TRANSCRIPT_LINES,
+			Math.floor(opts.lines ?? DEFAULT_TRANSCRIPT_LINES),
+		),
+	);
+
+	// Header: derive display values from the entry's first result.
+	// Multi-result entries (parallel / chain) get the first agent's
+	// name; the usage line at the bottom carries per-agent totals
+	// via appendUsageLines. This keeps the header one logical
+	// "who" line and leaves the per-agent accounting to the
+	// existing tool-shaped usage helper.
+	const first = entry.results[0];
+	const agentLabel = first?.agent ?? "(unknown agent)";
+	const modelLabel = first?.model ?? "?";
+	const providerLabel = first?.provider ?? "";
+	const stopReason = first?.stopReason ?? "(none)";
+	const exitCode = first?.exitCode ?? 0;
+	const msgCount = entry.results.reduce((s, r) => s + (r.messages?.length ?? 0), 0);
+	const taskPreview = first?.task
+		? (() => {
+				const flat = first.task.replace(/\s+/g, " ").trim();
+				return flat.length > TRANSCRIPT_TASK_PREVIEW_LEN
+					? `${flat.slice(0, TRANSCRIPT_TASK_PREVIEW_LEN)}...`
+					: flat;
+			})()
+		: "(no task)";
+
+	const header =
+		`[transcript] ${agentLabel}` +
+		` · ${providerLabel ? providerLabel + "/" : ""}${modelLabel}` +
+		` · stopReason=${stopReason} exit=${exitCode}` +
+		` · ${msgCount} msgs` +
+		` · task: ${taskPreview}`;
+
+	// Body: flatten, take the last `lines` steps, render as
+	// `#<step> [<kind>] <preview>`. Step numbers are 1-based and
+	// computed BEFORE the tail slice so they remain stable if the
+	// LLM scrolls through (e.g. "last 10 of 45 steps" gives
+	// steps #36..#45, not #1..#10).
+	const items = flattenEntrySteps(entry);
+	const tail = items.slice(-lines);
+	const skipped = items.length - tail.length;
+	let body = `最后 ${tail.length} 步：\n`;
+	if (skipped > 0) body += `  ... 省略前面 ${skipped} 步\n`;
+	const startStep = items.length - tail.length;
+	for (let i = 0; i < tail.length; i++) {
+		const stepNum = startStep + i + 1;
+		const item = tail[i]!;
+		if (item.type === "text") {
+			body += `  #${stepNum} [text] ${previewTextBlock(item.text)}\n`;
+		} else {
+			body += `  #${stepNum} [${item.name}] ${previewToolCallArgs(item.name, item.args)}\n`;
+		}
+	}
+
+	// Trailing usage line in the existing format. Empty-results
+	// entries (e.g. an entry whose results all got stripped by a
+	// prior compaction) get no usage line — `appendUsageLines`
+	// short-circuits on empty input.
+	const usageText = appendUsageLines("", entry.results).trim();
+	const parts = [header, body.trimEnd()];
+	if (usageText) parts.push(usageText);
+	return parts.join("\n\n");
+}
+
+/**
+ * Build the user-facing error text for the three failure paths.
+ * Kept as a tiny named function (rather than inlined) so the
+ * "Available agents" suggestion in the no-matches path can be
+ * derived from the entries that DID exist in the file (helping
+ * the LLM notice e.g. that it filtered for `worker` when the
+ * session only ever ran `researcher`).
+ */
+function transcriptFailureText(
+	kind: "no_session_file" | "no_matches" | "index_out_of_range",
+	opts: RenderTranscriptOpts,
+	allEntries: ReadonlyArray<SubagentJsonlEntry>,
+	pickOutcome: PickResult | null,
+): string {
+	if (kind === "no_session_file") {
+		return (
+			`[transcript] 无法读取会话持久化文件：当前会话没有设置 PI_SESSION_FILE 环境变量，\n` +
+			`可能是 ephemeral 模式（启动时带 --no-session）。事后查询需要先结束会话再重开。`
+		);
+	}
+	const only = opts.only ?? "interrupted";
+	const agentPart = opts.agent ? `, agent='${opts.agent}'` : "";
+	const onlyPart = only === "interrupted" ? "（含 suspended 快照的）" : "（全部）";
+	if (kind === "no_matches") {
+		const seenAgents = Array.from(new Set(allEntries.flatMap((e) => e.results.map((r) => r.agent)))).sort();
+		const hint =
+			seenAgents.length > 0
+				? `\n会话里出现过的 agent：${seenAgents.join(", ")}。`
+				: "";
+		const onlyHint =
+			only === "interrupted"
+				? `\n提示：把 only 改为 'all' 可以看到所有 subagent 调用（包括成功退出的）。`
+				: "";
+		return (
+			`[transcript] 在当前会话里没有找到匹配的 subagent 调用。\n` +
+			`筛选条件：only='${only}'${agentPart}。${hint}${onlyHint}`
+		);
+	}
+	// kind === "index_out_of_range"
+	const requested = pickOutcome && pickOutcome.kind === "index_out_of_range" ? pickOutcome.requested : (opts.index ?? 0);
+	const total =
+		pickOutcome && pickOutcome.kind === "index_out_of_range" ? pickOutcome.totalMatches : 0;
+	return (
+		`[transcript] 索引越界：请求的第 ${requested} 个匹配（0 = 最近）超过可用匹配数（${total}）。\n` +
+		`提示：把 index 调小，或放宽 only/agent 过滤。`
+	);
+}
+
+/**
+ * Synchronous shell around `parseSubagentEntries` +
+ * `pickSubagentEntry` + `renderTranscript`. Reads the host
+ * session file (env var `PI_SESSION_FILE`) and renders the
+ * matching entry.
+ *
+ * Pure read-only: does not touch any process, does not mutate
+ * the suspension registry, does not write to disk. Safe to call
+ * alongside any other subagent operation.
+ */
+async function handleTranscript(
+	transcriptParams: RenderTranscriptOpts,
+	_makeDetails: (mode: "single" | "parallel" | "chain", suspensions?: SuspendedSnapshot["suspensions"]) => (results: SingleResult[]) => SubagentDetails | SuspendedSnapshot,
+): Promise<AgentToolResult<SubagentDetails | SuspendedSnapshot>> {
+	const sessionFile = process.env.PI_SESSION_FILE;
+	if (!sessionFile) {
+		return {
+			content: [{ type: "text", text: transcriptFailureText("no_session_file", transcriptParams, [], null) }],
+			details: _makeDetails("single")([]),
+		};
+	}
+	if (!fs.existsSync(sessionFile)) {
+		return {
+			content: [
+				{
+					type: "text",
+					text:
+						`[transcript] PI_SESSION_FILE 指向的文件不存在：${sessionFile}\n` +
+						`可能是上一次会话被清理过，或者路径写错。`,
+				},
+			],
+			details: _makeDetails("single")([]),
+		};
+	}
+
+	let entries: SubagentJsonlEntry[];
+	try {
+		entries = await parseSubagentEntries(sessionFile);
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		return {
+			content: [
+				{
+					type: "text",
+					text: `[transcript] 解析会话文件失败：${msg}\n文件路径：${sessionFile}`,
+				},
+			],
+			details: _makeDetails("single")([]),
+		};
+	}
+
+	const picked = pickSubagentEntry(entries, transcriptParams);
+	if (picked.kind !== "found") {
+		const text =
+			picked.kind === "no_matches"
+				? transcriptFailureText("no_matches", transcriptParams, entries, picked)
+				: transcriptFailureText("index_out_of_range", transcriptParams, entries, picked);
+		return {
+			content: [{ type: "text", text }],
+			details: _makeDetails("single")([]),
+		};
+	}
+
+	const text = renderTranscript(picked.entry, transcriptParams);
+	return {
+		content: [{ type: "text", text }],
+		// Pass an empty results array on purpose: `renderResult`'s
+		// early-return (index.ts:1541) fires when both
+		// `details.results.length === 0` and
+		// `details.suspensions.length === 0`, which short-circuits
+		// straight to the text payload without iterating the
+		// normal-mode (single/parallel/chain) render branches. That
+		// matters for two reasons:
+		//   1. TUI responsiveness — the normal-mode branches walk
+		//      `getDisplayItems` + `formatToolCall` + markdown
+		//      theme render for every step in the entry, which on
+		//      a long-running subagent is hundreds of items and
+		//      causes visible lag when the user collapses/expands
+		//      the result. The text-only path is one allocation +
+		//      one paint.
+		//   2. Correctness — the transcript body already encodes
+		//      every step with a `#<n> [<kind>] <preview>` line,
+		//      so re-running it through the TUI's collapsed/expanded
+		//      renderer would either duplicate it or replace it
+		//      with a thinner view. The empty-details fast path
+		//      keeps the textual transcript the single source of
+		//      truth and avoids the two representations drifting.
+		details: _makeDetails(picked.entry.mode)([]),
+	};
+}
+
+/* -------------------------------------------------------------------------- */
 /*                          Arbitration handler bodies                         */
 /* -------------------------------------------------------------------------- */
 
@@ -1759,10 +2529,14 @@ function handleKill(
 		content: [
 			{
 				type: "text",
-				text: `Killed suspended sub-agent ${susp.partialResult.agent}. Partial transcript follows:\n\n${getFinalOutput(partial.messages) || "(no output)"}`,
+				text: appendUsageLines(
+					`Killed suspended sub-agent ${susp.partialResult.agent}. Partial transcript follows:\n\n${getFinalOutput(partial.messages) || "(no output)"}`,
+					[partial],
+				),
 			},
 		],
 		details: makeDetails("single")([partial]),
+		usage: aggregateUsageToUsage([partial]),
 	};
 }
 
@@ -1810,10 +2584,14 @@ function handleResume(
 			content: [
 				{
 					type: "text",
-					text: `Failed to thaw suspended sub-agent ${susp.partialResult.agent} (SIGCONT error).`,
+					text: appendUsageLines(
+						`Failed to thaw suspended sub-agent ${susp.partialResult.agent} (SIGCONT error).`,
+						[partial],
+					),
 				},
 			],
 			details: makeDetails("single")([partial]),
+			usage: aggregateUsageToUsage([partial]),
 		});
 	}
 
@@ -1850,11 +2628,15 @@ function handleResume(
 				content: [
 					{
 						type: "text",
-						text: `Agent ${failed.agent}: ${failed.errorMessage ?? "internal error"}`,
+						text: appendUsageLines(
+							`Agent ${failed.agent}: ${failed.errorMessage ?? "internal error"}`,
+							[failed],
+						),
 					},
 				],
 				details: makeDetails(resumeMode(susp.job))([failed]),
 				isError: true,
+				usage: aggregateUsageToUsage([failed]),
 			};
 		};
 
@@ -1887,10 +2669,14 @@ function handleResume(
 								content: [
 									{
 										type: "text",
-										text: `Resumed sub-agent re-froze then was force-killed (no SIGSTOP on win32). Partial transcript follows:\n\n${getFinalOutput(partial.messages) || "(no output)"}`,
+										text: appendUsageLines(
+											`Resumed sub-agent re-froze then was force-killed (no SIGSTOP on win32). Partial transcript follows:\n\n${getFinalOutput(partial.messages) || "(no output)"}`,
+											[partial],
+										),
 									},
 								],
 								details: makeDetails(resumeMode(susp.job))([partial]),
+								usage: aggregateUsageToUsage([partial]),
 							});
 							return;
 						}
@@ -1922,21 +2708,25 @@ function handleResume(
 							content: [
 								{
 									type: "text",
-									text: JSON.stringify(
-										{
-											status: "idle_suspended",
-											suspensionId: newId,
-											idleMs: Date.now() - lastEventAtMs,
-											runningCommand: inFlight?.command ?? null,
-											requestedTimeout: inFlight?.timeout ?? null,
-											tail: summarizeTail(partial.messages, partial.stderr, DEFAULT_TAIL_LINES),
-										},
-										null,
-										2,
+									text: appendUsageLines(
+										JSON.stringify(
+											{
+												status: "idle_suspended",
+												suspensionId: newId,
+												idleMs: Date.now() - lastEventAtMs,
+												runningCommand: inFlight?.command ?? null,
+												requestedTimeout: inFlight?.timeout ?? null,
+												tail: summarizeTail(partial.messages, partial.stderr, DEFAULT_TAIL_LINES),
+											},
+											null,
+											2,
+										),
+										[partial],
 									),
 								},
 							],
 							details: makeDetails(resumeMode(susp.job))([partial]),
+							usage: aggregateUsageToUsage([partial]),
 						});
 					},
 				);
@@ -1972,6 +2762,7 @@ function handleResume(
 						partial.usage.contextTokens = usage.totalTokens || 0;
 					}
 					if (!partial.model && msg.model) partial.model = msg.model;
+					if (!partial.provider && msg.provider) partial.provider = msg.provider;
 					if (msg.stopReason) partial.stopReason = msg.stopReason;
 					if (msg.errorMessage) partial.errorMessage = msg.errorMessage;
 				}
@@ -2084,10 +2875,14 @@ function handleResume(
 							content: [
 								{
 									type: "text",
-									text: `Resumed sub-agent was killed while resuming. Partial transcript:\n\n${getFinalOutput(result.messages) || "(no output)"}`,
+									text: appendUsageLines(
+										`Resumed sub-agent was killed while resuming. Partial transcript:\n\n${getFinalOutput(result.messages) || "(no output)"}`,
+										[result],
+									),
 								},
 							],
 							details: makeDetails(resumeMode(susp.job))([result]),
+							usage: aggregateUsageToUsage([result]),
 						});
 						return;
 					}
@@ -2111,10 +2906,16 @@ function handleResume(
 						settled.done = true;
 						resolve({
 							content: isError
-								? [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${out}` }]
-								: [{ type: "text", text: out }],
+								? [
+										{
+											type: "text",
+											text: appendUsageLines(`Agent ${result.stopReason || "failed"}: ${out}`, [result]),
+										},
+									]
+								: [{ type: "text", text: appendUsageLines(out, [result]) }],
 							details: makeDetails("single")([result]),
 							isError,
+							usage: aggregateUsageToUsage([result]),
 						});
 						return;
 					}
@@ -2164,11 +2965,15 @@ function handleResume(
 									content: [
 										{
 											type: "text",
-											text: `Chain stopped at step ${job.index + 1} (${result.agent}): ${failed.errorMessage ?? "internal error"}`,
+											text: appendUsageLines(
+												`Chain stopped at step ${job.index + 1} (${result.agent}): ${failed.errorMessage ?? "internal error"}`,
+												allResults,
+											),
 										},
 									],
 									details: makeDetails("chain")([...allResults]),
 									isError: true,
+									usage: aggregateUsageToUsage(allResults),
 								} satisfies AgentToolResult<SubagentDetails | SuspendedSnapshot>;
 							}),
 						);
@@ -2298,7 +3103,7 @@ function handleResume(
 						content: [
 							{
 								type: "text",
-								text:
+								text: appendUsageLines(
 									JSON.stringify(
 										{
 											status: "idle_suspended",
@@ -2310,9 +3115,12 @@ function handleResume(
 										null,
 										2,
 									) + `\n\n${trailerLines}`,
+									merged,
+								),
 							},
 						],
 						details: makeDetails("parallel", remaining)(merged),
+						usage: aggregateUsageToUsage(merged),
 					});
 					return;
 				}
@@ -2330,10 +3138,14 @@ function handleResume(
 					content: [
 						{
 							type: "text",
-							text: `Parallel: ${successCount}/${merged.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
+							text: appendUsageLines(
+								`Parallel: ${successCount}/${merged.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
+								merged,
+							),
 						},
 					],
 					details: makeDetails("parallel")(merged),
+					usage: aggregateUsageToUsage(merged),
 				});
 				return;
 			}
@@ -2459,36 +3271,43 @@ async function runSingle(
 			content: [
 				{
 					type: "text",
-					text: JSON.stringify(
-						{
-							status: "idle_suspended",
-							suspensionId: outcome.id,
-							idleMs: Date.now() - outcome.lastEventAtMs,
-							runningCommand: built[0]?.runningCommand ?? null,
-							requestedTimeout: built[0]?.requestedTimeout ?? null,
-							tail: built[0]?.tail ?? [],
-						},
-						null,
-						2,
+					text: appendUsageLines(
+						JSON.stringify(
+							{
+								status: "idle_suspended",
+								suspensionId: outcome.id,
+								idleMs: Date.now() - outcome.lastEventAtMs,
+								runningCommand: built[0]?.runningCommand ?? null,
+								requestedTimeout: built[0]?.requestedTimeout ?? null,
+								tail: built[0]?.tail ?? [],
+							},
+							null,
+							2,
+						),
+						[outcome.snapshot],
 					),
 				},
 			],
 			details: makeDetails("single", built)([outcome.snapshot]),
+			usage: aggregateUsageToUsage([outcome.snapshot]),
 		};
 	}
 	const result = outcome.result;
 	const isError = isFailedResult(result);
 	const out = getResultOutput(result);
 	if (isError) {
+		const text = `Agent ${result.stopReason || "failed"}: ${out}`;
 		return {
-			content: [{ type: "text", text: `Agent ${result.stopReason || "failed"}: ${out}` }],
+			content: [{ type: "text", text: appendUsageLines(text, [result]) }],
 			details: makeDetails("single")([result]),
 			isError: true,
+			usage: aggregateUsageToUsage([result]),
 		};
 	}
 	return {
-		content: [{ type: "text", text: out }],
+		content: [{ type: "text", text: appendUsageLines(out, [result]) }],
 		details: makeDetails("single")([result]),
+		usage: aggregateUsageToUsage([result]),
 	};
 }
 
@@ -2527,17 +3346,28 @@ async function runChain(
 		results.push(r.result);
 		if (r.isError) {
 			const errorMsg = getResultOutput(r.result);
+			const text = `Chain stopped at step ${i + 1} (${chain[i]!.agent}): ${errorMsg}`;
 			return {
-				content: [{ type: "text", text: `Chain stopped at step ${i + 1} (${chain[i]!.agent}): ${errorMsg}` }],
+				content: [{ type: "text", text: appendUsageLines(text, results) }],
 				details: makeDetails("chain")(results),
 				isError: true,
+				usage: aggregateUsageToUsage(results),
 			};
 		}
 		previousOutput = getFinalOutput(r.result.messages);
 	}
 	return {
-		content: [{ type: "text", text: getFinalOutput(results[results.length - 1]!.messages) || "(no output)" }],
+		content: [
+			{
+				type: "text",
+				text: appendUsageLines(
+					getFinalOutput(results[results.length - 1]!.messages) || "(no output)",
+					results,
+				),
+			},
+		],
 		details: makeDetails("chain")(results),
+		usage: aggregateUsageToUsage(results),
 	};
 }
 
@@ -2580,17 +3410,28 @@ async function runChainRemaining(
 		allResults[idx] = r.result;
 		if (r.isError) {
 			const errorMsg = getResultOutput(r.result);
+			const text = `Chain stopped at step ${idx + 1} (${remaining[i]!.agent}): ${errorMsg}`;
 			return {
-				content: [{ type: "text", text: `Chain stopped at step ${idx + 1} (${remaining[i]!.agent}): ${errorMsg}` }],
+				content: [{ type: "text", text: appendUsageLines(text, allResults) }],
 				details: makeDetails("chain")(allResults),
 				isError: true,
+				usage: aggregateUsageToUsage(allResults),
 			};
 		}
 		prev = getFinalOutput(r.result.messages);
 	}
 	return {
-		content: [{ type: "text", text: getFinalOutput(allResults[allResults.length - 1]!.messages) || "(no output)" }],
+		content: [
+			{
+				type: "text",
+				text: appendUsageLines(
+					getFinalOutput(allResults[allResults.length - 1]!.messages) || "(no output)",
+					allResults,
+				),
+			},
+		],
 		details: makeDetails("chain")(allResults),
+		usage: aggregateUsageToUsage(allResults),
 	};
 }
 
@@ -2658,21 +3499,25 @@ async function runChainStep(
 				content: [
 					{
 						type: "text",
-						text: JSON.stringify(
-							{
-								status: "idle_suspended",
-								suspensionId: outcome.id,
-								idleMs: Date.now() - outcome.lastEventAtMs,
-								runningCommand: built[0]?.runningCommand ?? null,
-								requestedTimeout: built[0]?.requestedTimeout ?? null,
-								tail: built[0]?.tail ?? [],
-							},
-							null,
-							2,
+						text: appendUsageLines(
+							JSON.stringify(
+								{
+									status: "idle_suspended",
+									suspensionId: outcome.id,
+									idleMs: Date.now() - outcome.lastEventAtMs,
+									runningCommand: built[0]?.runningCommand ?? null,
+									requestedTimeout: built[0]?.requestedTimeout ?? null,
+									tail: built[0]?.tail ?? [],
+								},
+								null,
+								2,
+							),
+							[outcome.snapshot],
 						),
 					},
 				],
 				details: makeDetails("chain", built)([...results, outcome.snapshot]),
+				usage: aggregateUsageToUsage([outcome.snapshot]),
 			},
 		};
 	}
@@ -2825,29 +3670,32 @@ async function runParallel(
 					`- suspensionId: ${s.suspensionId} (idleMs=${s.idleMs}, command=${s.runningCommand ?? "(none)"})`,
 			)
 			.join("\n");
+		const baseText =
+			JSON.stringify(
+				{
+					status: "idle_suspended",
+					suspensions: suspensions.map((s) => ({
+						suspensionId: s.suspensionId,
+						idleMs: s.idleMs,
+						runningCommand: s.runningCommand,
+						requestedTimeout: s.requestedTimeout,
+						tail: s.tail,
+					})),
+					completedCount: completedResults.length,
+					totalTasks: tasks.length,
+				},
+				null,
+				2,
+			) + `\n\n${suspendedText}`;
 		return {
 			content: [
 				{
 					type: "text",
-					text: JSON.stringify(
-						{
-							status: "idle_suspended",
-							suspensions: suspensions.map((s) => ({
-								suspensionId: s.suspensionId,
-								idleMs: s.idleMs,
-								runningCommand: s.runningCommand,
-								requestedTimeout: s.requestedTimeout,
-								tail: s.tail,
-							})),
-							completedCount: completedResults.length,
-							totalTasks: tasks.length,
-						},
-						null,
-						2,
-					) + `\n\n${suspendedText}`,
+					text: appendUsageLines(baseText, allResults),
 				},
 			],
 			details: makeDetails("parallel", suspensions)([...allResults]),
+			usage: aggregateUsageToUsage(allResults),
 		};
 	}
 
@@ -2859,14 +3707,16 @@ async function runParallel(
 			: "completed";
 		return `### [${r.agent}] ${status}\n\n${output}`;
 	});
+	const baseText = `Parallel: ${successCount}/${allResults.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`;
 	return {
 		content: [
 			{
 				type: "text",
-				text: `Parallel: ${successCount}/${allResults.length} succeeded\n\n${summaries.join("\n\n---\n\n")}`,
+				text: appendUsageLines(baseText, allResults),
 			},
 		],
 		details: makeDetails("parallel")(allResults),
+		usage: aggregateUsageToUsage(allResults),
 	};
 }
 
@@ -2910,6 +3760,22 @@ function parentProcessCleanup(): void {
 
 export function __resetParentProcessCleanupForTests(): void {
 	__parentProcessCleanupRegistered = false;
+}
+
+/**
+ * Reset the lazy `modelsStore` cache so the remote-store lookup
+ * path in `getContextWindowFor` re-reads
+ * `~/.pi/agent/models-store.json` on next call.
+ *
+ * The cache is `null | undefined`-typed (undefined = not loaded
+ * yet, null = load failed). Tests that pre-populate a fixture file
+ * call this between cases; tests that exercise the "no remote
+ * store" path use it to clear an earlier failed-load attempt
+ * before re-trying with a present file. Safe to call when the
+ * cache is already undefined (no-op).
+ */
+export function __resetModelsStoreForTests(): void {
+	modelsStore = undefined;
 }
 
 parentProcessCleanup();

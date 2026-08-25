@@ -165,6 +165,11 @@ export interface SingleResultLite {
 		turns: number;
 	};
 	model?: string;
+	/** Provider id from the first assistant message (mirrors
+	 *  `SingleResult.provider` in index.ts). Needed by the resume
+	 *  / chain-resume paths to resolve the model's context window
+	 *  via `getBuiltinModel(provider, model)`. */
+	provider?: string;
 	stopReason?: string;
 	errorMessage?: string;
 	step?: number;

@@ -5,9 +5,13 @@
     "baseUrl": ".",
     "paths": {
       "@earendil-works/pi-coding-agent": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/dist/index.js"],
+      "@earendil-works/pi-coding-agent/*": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/dist/*"],
       "@earendil-works/pi-ai": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.js"],
+      "@earendil-works/pi-ai/*": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/*"],
       "@earendil-works/pi-tui": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.js"],
+      "@earendil-works/pi-tui/*": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/*"],
       "@earendil-works/pi-agent-core": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core/dist/index.js"],
+      "@earendil-works/pi-agent-core/*": ["./assets/.pi/extensions/codegraph/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core/dist/*"],
       "typebox": ["./assets/.pi/extensions/codegraph/node_modules/typebox/build/index.mjs"]
     }
   },

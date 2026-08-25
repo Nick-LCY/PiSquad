@@ -138,6 +138,41 @@ describe("L4 · core extension manifest ships via install --yes", () => {
         /DEFAULT_BASH_TIMEOUT_S/,
         "bash-guard source must contain its timeout constant — copy may have corrupted the file",
       );
+
+      // Subagent extension: semantic-token assertions on the WIP
+      // usage-surfacing + transcript payload (0.3.2). We assert
+      // the FEATURES, not the exact export signature — a future
+      // refactor that re-organizes the module (e.g. moves the
+      // transcript renderer into a sibling file) shouldn't trip
+      // L4. The shipped behavior the LLM / consumer sees must be:
+      //   - aggregateUsageToUsage exists and sums cost.total
+      //   - appendUsageLines exists and renders per-agent usage
+      //   - renderTranscript exists and renders a [transcript] header
+      // This is the mirror of the "no fixture mirror" rule from
+      // [[conventions/release-verification.md]]: we pin the
+      // semantic contract, not the byte-for-byte layout.
+      const subagentPath = join(extRoot, "subagent", "index.ts");
+      const subagentContent = readFileSync(subagentPath, "utf-8");
+      assert.match(
+        subagentContent,
+        /\baggregateUsageToUsage\b/,
+        "subagent/index.ts must export aggregateUsageToUsage — 0.3.2 usage-surfacing WIP",
+      );
+      assert.match(
+        subagentContent,
+        /\bappendUsageLines\b/,
+        "subagent/index.ts must export appendUsageLines — 0.3.2 usage-surfacing WIP",
+      );
+      assert.match(
+        subagentContent,
+        /\brenderTranscript\b/,
+        "subagent/index.ts must export renderTranscript — 0.3.2 transcript WIP",
+      );
+      assert.match(
+        subagentContent,
+        /cost\.total/,
+        "subagent/index.ts must surface cost.total in aggregateUsageToUsage — 0.3.2 cost aggregation",
+      );
     } finally {
       rmSync(target, { recursive: true, force: true });
       // Surface proc for any test runner that captures locals.
